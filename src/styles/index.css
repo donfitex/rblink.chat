@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: #1A1D21;
+    --bg-secondary: #222529;
+    --bg-sidebar: #19171D;
+    --text-primary: #D1D2D3;
+    --text-muted: #ABABAD;
+    --border-color: #383F45;
+    --accent-blue: #1264A3;
+  }
+
+  body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  /* Custom Slim Scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #383F45;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #565D65;
+  }
+}
+
+/* Markdown prose styling */
+.markdown-body p {
+  margin-bottom: 0.35rem;
+  line-height: 1.5;
+}
+
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body strong {
+  font-weight: 600;
+  color: #FFFFFF;
+}
+
+.markdown-body em {
+  font-style: italic;
+}
+
+.markdown-body del {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.markdown-body code:not(pre code) {
+  background-color: #2D3136;
+  color: #E01E5A;
+  padding: 0.15rem 0.35rem;
+  border-radius: 0.25rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85em;
+}
+
+.markdown-body pre {
+  background-color: #121417;
+  border: 1px solid #2D3136;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.875rem;
+}
+
+.markdown-body blockquote {
+  border-left: 3px solid #1264A3;
+  padding-left: 0.75rem;
+  color: #ABABAD;
+  margin: 0.5rem 0;
+}
+
+.markdown-body ul {
+  list-style-type: disc;
+  padding-left: 1.25rem;
+  margin: 0.35rem 0;
+}
+
+.markdown-body ol {
+  list-style-type: decimal;
+  padding-left: 1.25rem;
+  margin: 0.35rem 0;
+}
+
+.markdown-body a {
+  color: #1D9BD1;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-body a:hover {
+  color: #68CDFF;
+}
+
+/* Mention chip */
+.mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background-color: rgba(18, 100, 163, 0.25);
+  color: #68CDFF;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mention-chip:hover {
+  background-color: rgba(18, 100, 163, 0.45);
+}
+
+.mention-special {
+  background-color: rgba(236, 178, 46, 0.25);
+  color: #F8D36B;
+}
+
+/* Animations */
+@keyframes highlightFade {
+  0% { background-color: rgba(236, 178, 46, 0.4); }
+  100% { background-color: transparent; }
+}
+
+.message-highlight-pulse {
+  animation: highlightFade 2.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
