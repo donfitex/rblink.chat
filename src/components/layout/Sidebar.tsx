@@ -365,6 +365,7 @@ export const Sidebar: React.FC = () => {
           </div>
           <div className="truncate">
             <p className="font-bold text-xs text-white truncate">{activeUser.name}</p>
+              <button onClick={() => window.dispatchEvent(new Event('rblink:logout'))} className="text-[10px] text-[#8D9197] hover:text-white underline">Log out</button>
             <p className="text-[11px] text-[#8D9197] truncate">
               {activeUser.customStatus
                 ? `${activeUser.customStatus.emoji} ${activeUser.customStatus.text}`

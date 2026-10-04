@@ -383,13 +383,17 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Switch Active User
   const switchActiveUser = useCallback((userId: string) => {
+    if (userId !== activeUserId) {
+      showToast('Account switching is disabled. Log out to use another account.', 'info');
+      return;
+    }
     setActiveUserId(userId);
     localStorage.setItem('rblink_active_user', userId);
     const user = users.find((u) => u.id === userId);
     if (user) {
       showToast(`Switched active user to ${user.name} (@${user.username})`, 'info');
     }
-  }, [users, showToast]);
+  }, [users, showToast, activeUserId]);
 
   // Update Profile
   const updateProfile = useCallback((updates: Partial<User>) => {

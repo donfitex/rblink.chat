@@ -1,3 +1,20 @@
+# rblink.chat (Step 1: backend foundation)
+
+**Start with `docs/BEGINNERS_GUIDE.md`.** Quick start: `npm install`, `npm test`, `npm start`, open http://localhost:3001.
+
+Built in Step 1 (all covered by `npm test`):
+- Accounts: email + password (with confirmation), Google, phone code login; password recovery; invite links (`/#/join/CODE`).
+- Profiles with social links; WhatsApp stays hidden until the owner approves a request.
+- Posts (categories, emoji reactions, save, reshare, share counts), threaded comments with voice notes. Visitors read only.
+- Marketplace with search and filters; job board for approved recruiters; applications with recruiter-chosen required fields, emailed to the recruiter.
+- Meetings and live rooms (WebRTC video/voice, signaling over the secure WebSocket) with chat and voice comments.
+- AI assistant through any OpenAI-compatible provider.
+- Clean workspace: all demo users, groups and messages removed.
+
+Backend is dependency-free Node (22+). Not yet built: the new screens (Steps 2 to 3). Honest limits: data is in a JSON file (fine for launch, plan a database before large scale); video rooms are peer-to-peer (about 8 people; use a media server such as LiveKit or Daily for big broadcasts); the chat sync snapshot does not yet enforce per-message permissions.
+
+---
+
 # 🚀 rblink.chat
 
 **rblink.chat** is an enterprise-grade, real-time team communication and collaboration platform inspired by Slack and Discord. Designed from the ground up to empower high-velocity engineering, design, and product cohorts with zero-latency communication, threaded conversations, interactive collaboration widgets, and full-text search.

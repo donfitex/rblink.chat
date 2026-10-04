@@ -9,12 +9,14 @@ import {
   Trash2,
   Copy,
   Link2,
+  Clock,
   Flag,
   Check,
   X
 } from 'lucide-react';
 import { Message, User } from '../../types';
 import { useChat } from '../../context/ChatContext';
+import { addReminder } from '../../auth/Reminders';
 import { formatFullTime, formatMessageTime, formatRelativeTime } from '../../utils/formatters';
 import { MarkdownContent } from './MarkdownContent';
 import { PollCard } from '../collaboration/PollCard';
@@ -48,6 +50,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isGrouped = f
     showToast,
     highlightedMessageId
   } = useChat();
+  const { activeUser: remindUser } = useChat();
 
   const [isHovered, setIsHovered] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -89,6 +92,12 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isGrouped = f
     const url = `${window.location.origin}/#msg-${message.id}`;
     navigator.clipboard.writeText(url);
     showToast('Message link copied to clipboard', 'info');
+    setShowMoreMenu(false);
+  };
+
+  const handleRemind = (minutes: number, label: string) => {
+    addReminder(remindUser.id, message, minutes);
+    showToast(`I'll remind you ${label}`, 'info');
     setShowMoreMenu(false);
   };
 
@@ -227,6 +236,16 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isGrouped = f
                   <Link2 className="w-3.5 h-3.5 text-[#8D9197]" />
                   Copy link to message
                 </button>
+                {([[20, 'in 20 minutes'], [60, 'in 1 hour'], [1440, 'tomorrow']] as [number, string][]).map(([mins, label]) => (
+                  <button
+                    key={mins}
+                    onClick={() => handleRemind(mins, label)}
+                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#2D3136] text-left"
+                  >
+                    <Clock className="w-3.5 h-3.5 text-[#8D9197]" />
+                    Remind me {label}
+                  </button>
+                ))}
                 <button
                   onClick={() => {
                     setReportMessageTarget(message);
