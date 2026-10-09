@@ -7,7 +7,8 @@ export default function(R,c){
  const origin=q=>process.env.APP_URL||`${q.headers['x-forwarded-proto']||'http'}://${q.headers.host}`;
  const open=(k,f)=>{f.open=true;R[k]=f};
  const pwCheck=b=>String(b.password||'').length<8?'Password must be at least 8 characters':b.password!==b.confirmPassword?'Passwords do not match':'';
- const useInvite=(t,u)=>{const i=db.invites[t];if(i&&i.exp>Date.now()&&i.uses<i.max){i.uses++;u.invitedBy=i.by;flush()}};
+ const useInvite=(t,u)=>{const i=db.invites[t];if(i&&i.exp>Date.now()&&i.uses<i.max){i.uses++;u.invitedBy=i.by;u.inviteToken=t;flush()}};
+ c.useInvite=useInvite;
  open('POST /api/auth/signup',async(q,s)=>{const b=await json(q),e=String(b.email||'').trim().toLowerCase();
   if(!String(b.name||'').trim()||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))return send(s,400,{error:'Enter your name and a valid email'});
   const pe=pwCheck(b);if(pe)return send(s,400,{error:pe});
@@ -34,5 +35,6 @@ export default function(R,c){
   if(!u){if(!String(b.name||'').trim())return send(s,400,{error:'Enter your name to create your account',needName:true});u=mk(String(b.name).trim(),'','',{phone:b.phone});if(b.invite)useInvite(b.invite,u)}
   delete db.otps[b.phone];flush();session(q,s,u)});
  R['POST /api/invites']=async(q,s,u)=>{const t=crypto.randomBytes(9).toString('base64url');db.invites[t]={by:u.id,exp:Date.now()+7*864e5,uses:0,max:50};flush();send(s,200,{token:t,link:`${origin(q)}/#/join/${t}`})};
+ R['GET /api/invites/mine']=(q,s,u)=>send(s,200,Object.entries(db.invites).filter(([,i])=>i.by===u.id).map(([t,i])=>({token:t,uses:i.uses,max:i.max,exp:i.exp,referred:db.users.filter(x=>x.invitedBy===u.id&&x.inviteToken===t).length,link:`${origin(q)}/#/join/${t}`})));
  open('GET /api/invites/:token',(q,s,u,P)=>{const i=db.invites[P.token];if(!i||i.exp<Date.now()||i.uses>=i.max)return send(s,404,{valid:false});send(s,200,{valid:true,inviter:db.users.find(x=>x.id===i.by)?.name||'A member'})});
 }

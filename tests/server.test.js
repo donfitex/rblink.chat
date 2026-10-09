@@ -51,3 +51,11 @@ test('data survives a restart',async()=>{
  await stop();await start();
  assert.equal((await call('POST','/api/auth/login',{email:'bob@example.com',password:'password123',confirmPassword:'password123'})).status,200);
  const s=await (await call('GET','/api/sync',null,A.token)).json();assert.equal(s.rev,2)});
+
+test('upload accepts a photo with no file extension (uses its type) and health reports storage',async()=>{
+ const f=new FormData();f.append('files',new Blob(['x'],{type:'image/jpeg'}),'camera-photo');
+ const r=await fetch(B+'/api/upload',{method:'POST',body:f,headers:{Cookie:'rblink_token='+A.token}}),j=await r.json();
+ assert.equal(r.status,200);assert.match(j.files[0].url,/\.jpg$/);
+ const f2=new FormData();f2.append('files',new Blob(['x'],{type:'image/heic'}),'IMG_1.HEIC');
+ assert.equal((await fetch(B+'/api/upload',{method:'POST',body:f2,headers:{Cookie:'rblink_token='+A.token}})).status,200);
+ assert.equal((await (await call('GET','/api/health')).json()).storage,'ok')});

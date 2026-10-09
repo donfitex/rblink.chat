@@ -57,6 +57,8 @@ export async function startSync(remount: () => void) {
   clearInterval(poller); poller = setInterval(poll, 3000);
 }
 
+export function pauseSync() { clearInterval(poller); }
+
 export function stopSync() {
   clearInterval(poller); clearTimeout(timer);
   Object.keys(localStorage).filter((k) => k.startsWith('rblink_')).forEach((k) => localStorage.removeItem(k));

@@ -8,8 +8,13 @@ fs.mkdirSync(UP,{recursive:true});
 let db={secret:crypto.randomBytes(32).toString('hex'),users:[],rev:0,sync:{}};
 try{db={...db,...JSON.parse(fs.readFileSync(DBF,'utf8'))}}catch{}
 const SECRET=process.env.SESSION_SECRET||db.secret;
-const flush=()=>{fs.writeFileSync(DBF+'.tmp',JSON.stringify(db));fs.renameSync(DBF+'.tmp',DBF)};
+let storage='ok';
+const flush=()=>{const data=JSON.stringify(db),tmp=DBF+'.tmp';
+ try{fs.writeFileSync(tmp,data);try{fs.renameSync(tmp,DBF)}catch{fs.writeFileSync(DBF,data);try{fs.unlinkSync(tmp)}catch{}}storage='ok'}
+ catch(e){storage='error: '+(e.code||e.message);console.error('[db] could not save to',DBF,'-',e.message)}};
 let st;const save=()=>{clearTimeout(st);st=setTimeout(flush,200)};flush();
+console.log(storage==='ok'?`[startup] data folder is writable: ${DATA}`:`[startup] PROBLEM: cannot write to ${DATA} (${storage}). Check the folder permissions.`);
+for(const ev of['uncaughtException','unhandledRejection'])process.on(ev,e=>console.error('[error]',e&&e.stack||e));
 for(const sg of['SIGTERM','SIGINT'])process.on(sg,()=>{flush();process.exit(0)});
 // ---- auth helpers
 const sign=uid=>{const p=Buffer.from(JSON.stringify({uid,exp:Date.now()+30*864e5})).toString('base64url');return p+'.'+crypto.createHmac('sha256',SECRET).update(p).digest('base64url')};
@@ -21,7 +26,7 @@ const pub=u=>({id:u.id,name:u.name,email:u.email||'',phone:u.phone||'',avatar:u.
 const mk=(name,email,pw,extra={})=>{const u={id:'u_'+crypto.randomBytes(6).toString('hex'),name:name.slice(0,60),email:email.toLowerCase(),pw:pw?hash(pw):'',role:db.users.length?'member':'owner',avatar:'',createdAt:new Date().toISOString(),...extra};db.users.push(u);flush();return u};
 const hits=new Map(),limited=ip=>{const n=Date.now(),a=(hits.get(ip)||[]).filter(t=>n-t<6e4);a.push(n);hits.set(ip,a);return a.length>30};
 // ---- http helpers
-const MAXB=(+process.env.UPLOAD_MAX_MB||100)*1024*1024,OKEXT=new Set('.png .jpg .jpeg .gif .webp .avif .mp4 .webm .mov .m4v .ogv .mp3 .wav .ogg .m4a .aac .pdf .doc .docx .xls .xlsx .ppt .pptx .txt .csv .zip'.split(' '));
+const MAXB=(+process.env.UPLOAD_MAX_MB||100)*1024*1024,OKEXT=new Set('.png .jpg .jpeg .gif .webp .avif .jfif .jpe .bmp .heic .heif .mp4 .webm .mov .m4v .ogv .mp3 .wav .ogg .m4a .aac .pdf .doc .docx .xls .xlsx .ppt .pptx .txt .csv .zip'.split(' '));
 const body=(q,max=2e7)=>new Promise((ok,no)=>{const c=[];let n=0,big=false;q.on('data',d=>{n+=d.length;if(n>max)big=true;else c.push(d)});q.on('end',()=>big?no(Object.assign(new Error('too big'),{code:413})):ok(Buffer.concat(c)));q.on('error',no)});
 const json=async q=>JSON.parse((await body(q)).toString()||'{}');
 const SEC={'X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'strict-origin-when-cross-origin','Permissions-Policy':'camera=(self), microphone=(self), display-capture=(self), geolocation=()'};
@@ -30,7 +35,7 @@ const session=(q,s,u)=>send(s,200,{user:pub(u),token:sign(u.id)},{'Set-Cookie':`
 // ---- routes
 const open=new Set(['GET /api/health','GET /api/config','POST /api/auth/signup','POST /api/auth/login','POST /api/auth/google','POST /api/auth/logout']);
 const R={
- 'GET /api/health':(q,s)=>send(s,200,{status:'ok',service:'rblink.chat server',version:'2.0.0',timestamp:new Date().toISOString()}),
+ 'GET /api/health':(q,s)=>send(s,200,{status:'ok',storage,service:'rblink.chat server',version:'3.0.1',timestamp:new Date().toISOString()}),
  'GET /api/config':(q,s)=>send(s,200,{googleClientId:GOOGLE}),
  'POST /api/auth/signup':async(q,s)=>{const{name,email,password}=await json(q),e=String(email||'').trim().toLowerCase();
   if(!String(name||'').trim()||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))return send(s,400,{error:'Enter your name and a valid email'});
@@ -40,10 +45,10 @@ const R={
  'POST /api/auth/login':async(q,s)=>{const{email,password}=await json(q),u=db.users.find(x=>x.email===String(email||'').trim().toLowerCase());
   if(!u||!u.pw||!check(String(password||''),u.pw))return send(s,401,{error:'Incorrect email or password'});session(q,s,u)},
  'POST /api/auth/google':async(q,s)=>{if(!GOOGLE)return send(s,501,{error:'Google sign-in is not configured on this server'});
-  const{credential}=await json(q),r=await fetch('https://oauth2.googleapis.com/tokeninfo?id_token='+encodeURIComponent(credential||'')),g=await r.json();
+  const{credential,invite}=await json(q),r=await fetch('https://oauth2.googleapis.com/tokeninfo?id_token='+encodeURIComponent(credential||'')),g=await r.json();
   if(!r.ok||g.aud!==GOOGLE||g.email_verified!=='true')return send(s,401,{error:'Google sign-in failed'});
   let u=db.users.find(x=>x.googleId===g.sub||x.email===g.email.toLowerCase());
-  if(!u)u=mk(g.name||g.email,g.email,'',{avatar:g.picture||''});u.googleId=g.sub;flush();session(q,s,u)},
+  if(!u){u=mk(g.name||g.email,g.email,'',{avatar:g.picture||''});if(invite&&ctx.useInvite)ctx.useInvite(invite,u)}u.googleId=g.sub;flush();session(q,s,u)},
  'POST /api/auth/logout':(q,s)=>send(s,200,{ok:true},{'Set-Cookie':'rblink_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'}),
  'GET /api/auth/me':(q,s,u)=>send(s,200,{user:pub(u)}),
  'GET /api/sync':(q,s)=>send(s,200,{rev:db.rev,data:db.sync}),
@@ -53,13 +58,18 @@ const R={
  'POST /api/upload':async(q,s)=>{const m=/boundary=(?:"([^"]+)"|([^;]+))/.exec(q.headers['content-type']||'');if(!m)return send(s,400,{error:'Expected multipart upload'});
   const buf=await body(q,MAXB),b=Buffer.from('--'+(m[1]||m[2])),files=[];let i=buf.indexOf(b);
   while(i>=0){const j=buf.indexOf(b,i+b.length);if(j<0)break;const part=buf.subarray(i+b.length+2,j-2),h=part.indexOf('\r\n\r\n'),head=part.subarray(0,h).toString(),fn=/filename="([^"]*)"/.exec(head);
-   if(fn&&files.length<10){const data=part.subarray(h+4),name=path.basename(fn[1])||'file',fname=`file-${Date.now()}-${crypto.randomBytes(4).toString('hex')}${path.extname(name).replace(/[^.\w]/g,'').slice(0,10)}`;
-    if(!OKEXT.has(path.extname(name).toLowerCase()))return send(s,415,{error:'This file type is not allowed'});fs.writeFileSync(path.join(UP,fname),data);
-    files.push({id:'att_'+crypto.randomBytes(5).toString('hex'),name,size:data.length,type:(/Content-Type:\s*([^\r\n]+)/i.exec(head)||[])[1]||'application/octet-stream',url:'/uploads/'+fname,uploadedAt:new Date().toISOString()})}
+   if(fn&&files.length<10){const data=part.subarray(h+4),name=path.basename(fn[1])||'file',ct=((/Content-Type:\s*([^\r\n]+)/i.exec(head)||[])[1]||'application/octet-stream').split(';')[0].trim().toLowerCase();
+    let ext=path.extname(name).toLowerCase().replace(/[^.\w]/g,'').slice(0,10);
+    if(!OKEXT.has(ext))ext=EXTBY[ct]||ext;
+    if(!OKEXT.has(ext))return send(s,415,{error:'This file type is not allowed'});
+    const fname=`file-${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`;
+    try{fs.writeFileSync(path.join(UP,fname),data)}catch(e){console.error('[upload]',e.message);return send(s,500,{error:'The server could not save the file ('+(e.code||e.message)+'). Check the data folder.'})}
+    files.push({id:'att_'+crypto.randomBytes(5).toString('hex'),name,size:data.length,type:ct,url:'/uploads/'+fname,uploadedAt:new Date().toISOString()})}
    i=j}
   files.length?send(s,200,{success:true,files}):send(s,400,{error:'No files uploaded'})}
 };
-const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.svg':'image/svg+xml','.pdf':'application/pdf','.mp4':'video/mp4','.webm':'video/webm','.mov':'video/quicktime','.m4v':'video/mp4','.mp3':'audio/mpeg','.wav':'audio/wav','.ogg':'audio/ogg','.m4a':'audio/mp4','.aac':'audio/aac','.txt':'text/plain'};
+const EXTBY={'image/jpeg':'.jpg','image/png':'.png','image/gif':'.gif','image/webp':'.webp','image/avif':'.avif','image/heic':'.heic','image/heif':'.heif','video/mp4':'.mp4','video/webm':'.webm','video/quicktime':'.mov','audio/webm':'.webm','audio/mpeg':'.mp3','audio/mp4':'.m4a','audio/ogg':'.ogg','audio/wav':'.wav','audio/aac':'.aac','application/pdf':'.pdf'};
+const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.jfif':'image/jpeg','.jpe':'image/jpeg','.bmp':'image/bmp','.heic':'image/heic','.heif':'image/heif','.gif':'image/gif','.webp':'image/webp','.svg':'image/svg+xml','.pdf':'application/pdf','.mp4':'video/mp4','.webm':'video/webm','.mov':'video/quicktime','.m4v':'video/mp4','.mp3':'audio/mpeg','.wav':'audio/wav','.ogg':'audio/ogg','.m4a':'audio/mp4','.aac':'audio/aac','.txt':'text/plain'};
 const risky=new Set(['.html','.htm','.svg','.js','.xml']);
 function serve(s,dir,rel,isUpload){const f=path.resolve(dir,'.'+path.sep+rel);if(!f.startsWith(dir+path.sep)||!fs.existsSync(f)||!fs.statSync(f).isFile())return false;
  const e=path.extname(f).toLowerCase(),h={'Content-Type':mime[e]||'application/octet-stream',...SEC};
@@ -75,7 +85,9 @@ const server=http.createServer(async(q,s)=>{
   if(p.startsWith('/uploads/'))return serve(s,UP,p.slice(9),true)||send(s,404,{error:'Not found'});
   const dist=path.join(root,'dist');if(!fs.existsSync(dist)){s.writeHead(503);return s.end('Frontend not built. Run: npm run build')}
   if(!serve(s,dist,p==='/'?'index.html':p.slice(1)))serve(s,dist,'index.html')
- }catch(e){if(!s.headersSent)send(s,e.code===413?413:400,{error:e.code===413?'File too large':'Bad request'});else s.end()}});
+ }catch(e){console.error('[error]',q.method,q.url,e&&e.stack||e);
+  if(!s.headersSent){const bad=e instanceof SyntaxError,big=e&&e.code===413;
+   send(s,big?413:bad?400:500,{error:big?'File too large':bad?'The request was not understood':'Server problem'+(process.env.NODE_ENV==='production'?'. Please try again.':': '+(e&&(e.code||e.message)))})}else s.end()}});
 // ---- minimal WebSocket (RFC 6455) so no dependency is needed
 const clients=new Set(),GUID='258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const enc=(d,op=1)=>{d=Buffer.from(d);const l=d.length,h=l<126?Buffer.from([128|op,l]):l<65536?Buffer.from([128|op,126,l>>8,l&255]):(()=>{const x=Buffer.alloc(10);x[0]=128|op;x[1]=127;x.writeBigUInt64BE(BigInt(l),2);return x})();return Buffer.concat([h,d])};

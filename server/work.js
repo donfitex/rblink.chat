@@ -12,7 +12,8 @@ export default function(R,c){
  // ----- marketplace
  open('GET /api/market/categories',(q,s)=>send(s,200,MARKET_CATEGORIES));
  open('GET /api/market',(q,s,u,P,x)=>{const g=k=>x.searchParams.get(k)||'',t=g('q').toLowerCase(),cat=g('category'),co=g('country').toLowerCase(),ci=g('city').toLowerCase(),min=g('min')?+g('min'):null,max=g('max')?+g('max'):null,cond=g('condition'),sort=g('sort');
-  let l=db.market.filter(m=>m.status==='active'&&(!t||(m.title+' '+m.description).toLowerCase().includes(t))&&(!cat||m.category===cat)&&(!co||m.country.toLowerCase()===co)&&(!ci||m.city.toLowerCase().includes(ci))&&(min===null||m.price>=min)&&(max===null||m.price<=max)&&(!cond||m.condition===cond));
+  const sel=g('seller');
+  let l=db.market.filter(m=>(m.status==='active'||(!!u&&sel===u.id))&&(!sel||m.sellerId===sel)&&(!t||(m.title+' '+m.description).toLowerCase().includes(t))&&(!cat||m.category===cat)&&(!co||m.country.toLowerCase()===co)&&(!ci||m.city.toLowerCase().includes(ci))&&(min===null||m.price>=min)&&(max===null||m.price<=max)&&(!cond||m.condition===cond));
   l=l.sort(sort==='price_asc'?(a,b)=>a.price-b.price:sort==='price_desc'?(a,b)=>b.price-a.price:(a,b)=>b.createdAt.localeCompare(a.createdAt));
   send(s,200,{total:l.length,items:l.slice(+g('offset')||0,(+g('offset')||0)+(+g('limit')||24)).map(m=>({...m,seller:au(m.sellerId)}))})});
  open('GET /api/market/:id',(q,s,u,P)=>{const m=db.market.find(x=>x.id===P.id);m?send(s,200,{...m,seller:au(m.sellerId)}):send(s,404,{error:'Listing not found'})});
@@ -42,8 +43,9 @@ export default function(R,c){
  open('GET /api/jobs/:id',(q,s,u,P)=>{const j=db.jobs.find(x=>x.id===P.id);if(!j)return send(s,404,{error:'Job not found'});send(s,200,{...pj(j,!!u&&(j.posterId===u.id||isAdmin(u))),applied:!!u&&db.apps.some(a=>a.jobId===j.id&&a.userId===u.id)})});
  R['POST /api/jobs']=async(q,s,u)=>{if(!u.recruiter&&!isAdmin(u))return send(s,403,{error:'Only approved recruiters can post jobs. Request approval first.'});
   const b=await json(q);if(!str(b.title,120)||!str(b.company,100)||!str(b.description,6000))return send(s,400,{error:'Job title, company and description are required'});
+  const ce=str(b.cvEmail,120);if(ce&&!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ce))return send(s,400,{error:'Enter a valid CV email'});
   const em=str(b.applyEmail,120);if(em&&!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em))return send(s,400,{error:'Enter a valid application email'});
-  const j={id:id('j'),posterId:u.id,title:str(b.title,120),company:str(b.company,100),location:str(b.location,100),remote:!!b.remote,type:['full-time','part-time','contract','internship','freelance'].includes(b.type)?b.type:'full-time',
+  const j={id:id('j'),posterId:u.id,cvEmail:ce,title:str(b.title,120),company:str(b.company,100),location:str(b.location,100),remote:!!b.remote,type:['full-time','part-time','contract','internship','freelance'].includes(b.type)?b.type:'full-time',
    level:['entry','mid','senior','lead','executive'].includes(b.level)?b.level:'mid',salary:str(b.salary,60),description:str(b.description,6000),endDate:/^\d{4}-\d{2}-\d{2}$/.test(b.endDate||'')?b.endDate:'',image:imgs([b.image])[0]||'',
    applyEmail:em||u.email||'',website:url(b.website),applyMode:['form','external','none'].includes(b.applyMode)?b.applyMode:'form',formUrl:url(b.formUrl),form:normForm(b.form),closed:false,createdAt:new Date().toISOString()};
   db.jobs.push(j);save();send(s,200,pj(j,true))};
@@ -59,10 +61,13 @@ export default function(R,c){
    if(f.req&&!v)miss.push(LABEL[k]);ans[k]=v}
   const cu={};for(const x of j.form.custom){const v=str((b.custom||{})[x.id],1000);if(x.req&&!v)miss.push(x.label);cu[x.label]=v}
   if(miss.length)return send(s,400,{error:'Please complete: '+miss.join(', ')});
-  const app={id:id('a'),jobId:j.id,userId:u.id,answers:ans,custom:cu,createdAt:new Date().toISOString()};db.apps.push(app);flush();
+  const app={id:id('a'),jobId:j.id,userId:u.id,status:'new',answers:ans,custom:cu,createdAt:new Date().toISOString()};db.apps.push(app);flush();
   const origin=`${q.headers['x-forwarded-proto']||'http'}://${q.headers.host}`,cvl=ans.cv?(ans.cv.startsWith('/')?origin+ans.cv:ans.cv):'';
   const lines=[...Object.entries(ans).filter(([k,v])=>v&&k!=='cv').map(([k,v])=>`${LABEL[k]}: ${v}`),...Object.entries(cu).map(([k,v])=>`${k}: ${v}`),cvl&&`CV: ${cvl}`].filter(Boolean);
   if(j.applyEmail)sendMail({to:j.applyEmail,subject:`New application: ${j.title} - ${ans.fullName}`,text:`New application for "${j.title}" at ${j.company}\n\n${lines.join('\n')}`});
   send(s,200,{ok:true})};
  R['GET /api/jobs/:id/applications']=(q,s,u,P)=>{const j=db.jobs.find(x=>x.id===P.id);if(!j)return send(s,404,{error:'Not found'});if(j.posterId!==u.id&&!isAdmin(u))return send(s,403,{error:'Not allowed'});send(s,200,db.apps.filter(a=>a.jobId===j.id).map(a=>({...a,applicant:au(a.userId)})))};
+ R['PATCH /api/jobs/:id/applications/:aid']=async(q,s,u,P)=>{const j=db.jobs.find(x=>x.id===P.id);if(!j)return send(s,404,{error:'Not found'});if(j.posterId!==u.id&&!isAdmin(u))return send(s,403,{error:'Not allowed'});
+  const a=db.apps.find(x=>x.id===P.aid&&x.jobId===j.id);if(!a)return send(s,404,{error:'Application not found'});const st=(await json(q)).status;if(!['new','shortlisted','rejected'].includes(st))return send(s,400,{error:'Invalid status'});a.status=st;flush();send(s,200,{status:st})};
+ R['GET /api/me/applications']=(q,s,u)=>send(s,200,db.apps.filter(a=>a.userId===u.id).map(a=>{const j=db.jobs.find(x=>x.id===a.jobId);return{id:a.id,status:a.status||'new',createdAt:a.createdAt,job:j?{id:j.id,title:j.title,company:j.company}:null}}).reverse());
 }

@@ -1,18 +1,6 @@
 import React from 'react';
-import { ChatProvider } from './context/ChatContext';
-import { AppLayout } from './components/layout/AppLayout';
-import { AuthGate } from './auth/AuthGate';
-import { RemindersRunner } from './auth/Reminders';
+import { Shell } from './platform/Shell';
 
-export const App: React.FC = () => {
-  return (
-    <AuthGate>
-      <ChatProvider>
-        <RemindersRunner />
-        <AppLayout />
-      </ChatProvider>
-    </AuthGate>
-  );
-};
+export const App: React.FC = () => <Shell />;
 
 export default App;

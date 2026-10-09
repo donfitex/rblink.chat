@@ -32,7 +32,9 @@ test('phone sign-in: code, wrong code, new account needs a name, then login',asy
 test('invite links',async()=>{
  const i=(await call('POST','/api/invites',{},admin.token)).j;assert.match(i.link,/#\/join\//);
  assert.equal((await call('GET','/api/invites/'+i.token)).j.inviter,'Admin');assert.equal((await call('GET','/api/invites/bad')).status,404);
- const u=(await call('POST','/api/auth/signup',{name:'Invited',email:'inv@x.com',password:'password123',confirmPassword:'password123',invite:i.token})).j;assert.ok(u.user)});
+ const u=(await call('POST','/api/auth/signup',{name:'Invited',email:'inv@x.com',password:'password123',confirmPassword:'password123',invite:i.token})).j;assert.ok(u.user);
+ const mine=(await call('GET','/api/invites/mine',null,admin.token)).j;assert.equal(mine[0].uses,1);assert.equal(mine[0].referred,1);assert.match(mine[0].link,/#\/join\//);
+ assert.deepEqual((await call('GET','/api/invites/mine',null,bob.token)).j,[])});
 test('visitors see names only; members see profiles; WhatsApp needs approval',async()=>{
  const v=(await call('GET','/api/users')).j;assert.deepEqual(Object.keys(v[0]).sort(),['avatar','id','name']);
  assert.equal((await call('GET','/api/users/'+ann.user.id)).status,401);
@@ -72,17 +74,24 @@ test('marketplace: members list, anyone searches and filters',async()=>{
  assert.equal((await mk('',1,'x')).status,400);
  const g=p=>call('GET','/api/market'+p).then(r=>r.j.items.map(i=>i.title));
  assert.equal((await g('')).length,3);assert.deepEqual(await g('?q=phone&country=Nigeria&max=200'),['Samsung phone']);assert.deepEqual(await g('?category=vehicles'),['Toyota Camry']);assert.deepEqual(await g('?city=lag'),['iPhone 13']);
- assert.deepEqual(await g('?country=Nigeria&sort=price_asc'),['Samsung phone','iPhone 13'])});
+ assert.deepEqual(await g('?country=Nigeria&sort=price_asc'),['Samsung phone','iPhone 13']);
+ const mine=(await call('GET','/api/market?seller='+ann.user.id,null,ann.token)).j.items;assert.equal(mine.length,3);
+ assert.equal((await call('PATCH','/api/market/'+mine[0].id,{status:'sold'},bob.token)).status,403);
+ await call('PATCH','/api/market/'+mine[0].id,{status:'sold'},ann.token);
+ assert.equal((await g('')).length,2);
+ assert.equal((await call('GET','/api/market?seller='+ann.user.id,null,ann.token)).j.items.length,3);
+ assert.equal((await call('GET','/api/market?seller='+ann.user.id)).j.items.length,2)});
 let job;
 test('jobs: only approved recruiters post; applications honour required fields',async()=>{
- const body={title:'Dev',company:'Acme',description:'Build things',location:'Lagos',endDate:'2099-01-01',applyEmail:'hr@acme.com',form:{fields:{currentPosition:{on:true,req:true},cv:{on:true,req:false},coverLetter:{on:true,req:false}},custom:[{label:'Why us?',req:true}]}};
+ const body={title:'Dev',company:'Acme',description:'Build things',location:'Lagos',endDate:'2099-01-01',applyEmail:'hr@acme.com',cvEmail:'cv@acme.com',form:{fields:{currentPosition:{on:true,req:true},cv:{on:true,req:false},coverLetter:{on:true,req:false}},custom:[{label:'Why us?',req:true}]}};
  assert.equal((await call('POST','/api/jobs',body,ann.token)).status,403);
  assert.equal((await call('POST','/api/recruiter/request',{company:'Acme'},ann.token)).j.status,'pending');
  assert.equal((await call('GET','/api/admin/recruiters',null,ann.token)).status,403);
  const rq=(await call('GET','/api/admin/recruiters',null,admin.token)).j;assert.equal(rq.length,1);
  await call('POST','/api/admin/recruiters/'+rq[0].id,{approve:true},admin.token);
  job=(await call('POST','/api/jobs',body,ann.token)).j;assert.equal(job.form.fields.email.req,true);assert.equal(job.applyEmail,'hr@acme.com');
- const pub=(await call('GET','/api/jobs')).j;assert.equal(pub.length,1);assert.equal(pub[0].applyEmail,undefined);
+ const pub=(await call('GET','/api/jobs')).j;assert.equal(pub.length,1);assert.equal(pub[0].applyEmail,undefined);assert.equal(pub[0].cvEmail,'cv@acme.com');
+ assert.equal((await call('POST','/api/jobs',{...body,cvEmail:'bad'},ann.token)).status,400);
  const ap=a=>call('POST',`/api/jobs/${job.id}/apply`,a,bob.token);
  assert.match((await ap({answers:{email:'b@x.com',fullName:'Bob'}})).j.error,/Current position.*Why us/);
  assert.equal((await ap({answers:{email:'bad',fullName:'Bob',currentPosition:'Dev'},custom:{q0:'x'}})).status,400);
@@ -91,6 +100,10 @@ test('jobs: only approved recruiters post; applications honour required fields',
  assert.equal((await ap({answers:{email:'b@x.com',fullName:'Bob',currentPosition:'Dev'},custom:{q0:'x'}})).status,409);
  assert.equal((await call('GET',`/api/jobs/${job.id}/applications`,null,bob.token)).status,403);
  const apps=(await call('GET',`/api/jobs/${job.id}/applications`,null,ann.token)).j;assert.equal(apps[0].custom['Why us?'],'Growth');
+ const au=`/api/jobs/${job.id}/applications/${apps[0].id}`;assert.equal(apps[0].status,'new');
+ assert.equal((await call('PATCH',au,{status:'shortlisted'},bob.token)).status,403);assert.equal((await call('PATCH',au,{status:'bogus'},ann.token)).status,400);
+ assert.equal((await call('PATCH',au,{status:'shortlisted'},ann.token)).j.status,'shortlisted');
+ const my=(await call('GET','/api/me/applications',null,bob.token)).j;assert.equal(my[0].job.title,'Dev');assert.equal(my[0].status,'shortlisted');
  await call('PATCH','/api/jobs/'+job.id,{closed:true},ann.token);assert.equal((await call('GET','/api/jobs')).j.length,0)});
 test('rooms: create, signaling relay, room chat with voice, capacity, host ends',async()=>{
  const r=(await call('POST','/api/rooms',{type:'meeting',title:'Standup'},admin.token)).j;assert.match(r.code,/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/);

@@ -63,7 +63,7 @@ export const AppLayout: React.FC = () => {
       : null;
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#1A1D21] text-[#D1D2D3]">
+    <div className="flex flex-col h-full w-full overflow-hidden bg-[#1A1D21] text-[#D1D2D3]">
       {/* Top Navigation */}
       <TopNavbar />
 
