@@ -8,6 +8,28 @@ fs.mkdirSync(UP,{recursive:true});
 let db={secret:crypto.randomBytes(32).toString('hex'),users:[],rev:0,sync:{}};
 try{db={...db,...JSON.parse(fs.readFileSync(DBF,'utf8'))}}catch{}
 if(remote){try{const r=await loadRemote();if(r)db={...db,...r};console.log(r?'[startup] database loaded from Supabase':'[startup] Supabase database is empty: starting from local data')}catch(e){console.error('[startup] cannot read from Supabase:',e.message);process.exit(1)}}
+// One-time cleanup for the development chat fixture. The old fixture was
+// synchronized into production storage, so removing its source files alone
+// could not remove it from existing deployments.
+const DEMO_USER_IDS=new Set(['u1','u2','u3','u4','u5','u6']);
+const syncList=k=>{try{return JSON.parse(db.sync[k]||'[]')}catch{return[]}};
+function removeDemoChatData(){
+ const users=syncList('rblink_users');
+ if(!users.some(u=>DEMO_USER_IDS.has(u.id)))return false;
+ const accountIds=new Set(db.users.map(u=>u.id));
+ const members=users.filter(u=>!DEMO_USER_IDS.has(u.id)&&accountIds.has(u.id));
+ const owner=db.users.find(u=>u.role==='owner')||db.users[0];
+ if(!owner)return false;
+ if(!members.some(u=>u.id===owner.id))members.push({id:owner.id,name:owner.name,email:owner.email||'',username:(owner.email||'member').split('@')[0],avatar:owner.avatar||'',role:owner.role||'owner',presence:'online',joinedAt:owner.createdAt||new Date().toISOString(),lastActive:new Date().toISOString()});
+ let workspace={};try{workspace=JSON.parse(db.sync.rblink_workspace||'{}')}catch{}
+ const now=new Date().toISOString();
+ db.sync.rblink_users=JSON.stringify(members);
+ db.sync.rblink_workspace=JSON.stringify({...workspace,id:workspace.id||'ws_rblink_main',name:workspace.name||'rblink.chat',ownerId:owner.id,pendingInvites:[]});
+ db.sync.rblink_channels=JSON.stringify([{id:'c_general',name:'general',description:'Team-wide conversation.',topic:'',isPrivate:false,isArchived:false,category:'general',memberIds:members.map(u=>u.id),createdBy:owner.id,createdAt:now,isStarred:false}]);
+ db.sync.rblink_dms='[]';db.sync.rblink_messages='{}';db.rev++;
+ return true;
+}
+const demoChatDataRemoved=removeDemoChatData();
 const SECRET=process.env.SESSION_SECRET||db.secret;
 let storage='ok',pushing=false,again=false;
 async function pushRemote(){if(pushing){again=true;return}pushing=true;try{await saveRemote(db);storage='ok'}catch(e){storage='error: '+e.message;console.error('[db] Supabase save failed:',e.message)}pushing=false;if(again){again=false;pushRemote()}}
@@ -17,6 +39,7 @@ const flush=()=>{const data=JSON.stringify(db),tmp=DBF+'.tmp';
  if(remote)pushRemote()};
 const drain=async()=>{for(let i=0;i<60&&(pushing||again);i++)await new Promise(r=>setTimeout(r,100))};
 let st;const save=()=>{clearTimeout(st);st=setTimeout(flush,200)};flush();
+if(demoChatDataRemoved)console.log('[startup] removed development chat users and sample conversations');
 console.log(remote?`[startup] saving to Supabase (plus a local copy in ${DATA})`:storage==='ok'?`[startup] data folder is writable: ${DATA}`:`[startup] PROBLEM: cannot write to ${DATA} (${storage}). Check the folder permissions.`);
 for(const ev of['uncaughtException','unhandledRejection'])process.on(ev,e=>console.error('[error]',e&&e.stack||e));
 for(const sg of['SIGTERM','SIGINT'])process.on(sg,async()=>{flush();await drain();process.exit(0)});

@@ -186,7 +186,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [activeUserId, setActiveUserId] = useState<string>(() => {
-    return localStorage.getItem('rblink_active_user') || 'u1';
+    return localStorage.getItem('rblink_active_user') || '';
   });
 
   const activeUser = users.find((u) => u.id === activeUserId) || users[0];
@@ -202,7 +202,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [currentChannelId, setCurrentChannelId] = useState<string | null>(() => {
-    return localStorage.getItem('rblink_current_channel') || 'c_general';
+    return localStorage.getItem('rblink_current_channel');
   });
 
   const [currentDmId, setCurrentDmId] = useState<string | null>(null);
@@ -216,7 +216,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [savedMessageIds, setSavedMessageIds] = useState<string[]>(() => {
     const saved = localStorage.getItem('rblink_saved_ids');
-    return saved ? JSON.parse(saved) : ['m_ann_1', 'm_eng_2'];
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [notifications, setNotifications] = useState<Notification[]>(() => {

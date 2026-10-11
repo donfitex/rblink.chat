@@ -76,14 +76,14 @@ export const TopNavbar: React.FC = () => {
         </button>
       </div>
 
-      {/* Right: Quick Switch User + Notifications + Help */}
+      {/* Right: Account menu, notifications and help */}
       <div className="flex items-center gap-1.5">
-        {/* Switch Active User Dropdown (Pair testing simulation) */}
+        {/* Signed-in account menu */}
         <div className="relative">
           <button
             onClick={() => setShowUserMenu(!showUserMenu)}
             className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#1A1D21] border border-[#383F45] hover:border-[#565D65] text-xs text-white transition-colors"
-            title="Switch User / Pair Testing"
+            title="Account menu"
           >
             <div className="relative">
               <img
@@ -157,31 +157,6 @@ export const TopNavbar: React.FC = () => {
                   <Sparkles className="w-3.5 h-3.5" />
                   Restart welcome onboarding
                 </button>
-              </div>
-
-              {/* Quick Switch User List (For seamless multi-role testing) */}
-              <div className="py-1">
-                <div className="px-3 py-1 text-[10px] font-semibold uppercase text-[#8D9197]">
-                  Switch User (Testing Simulator)
-                </div>
-                {users.map((u) => (
-                  <button
-                    key={u.id}
-                    onClick={() => {
-                      switchActiveUser(u.id);
-                      setShowUserMenu(false);
-                    }}
-                    className={`w-full flex items-center justify-between px-3 py-1.5 hover:bg-[#2D3136] transition-colors ${
-                      u.id === activeUser.id ? 'bg-[#1264A3]/20 font-semibold text-white' : ''
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 truncate">
-                      <img src={u.avatar} alt="" className="w-5 h-5 rounded-full object-cover" />
-                      <span className="truncate">{u.name}</span>
-                    </div>
-                    <span className="text-[10px] text-[#8D9197] capitalize">{u.role}</span>
-                  </button>
-                ))}
               </div>
             </div>
           )}
