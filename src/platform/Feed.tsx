@@ -216,7 +216,16 @@ export const PostList = ({ query, empty }: { query: string; empty?: string }) =>
 // ---------- Composer: text only, photos only, videos only, or any mix
 const Composer = ({ onPosted }: { onPosted: () => void }) => {
   const { me } = useMe();
-  const [text, setText] = useState('');
+  const [text, setText] = useState(() => {
+    const d = sessionStorage.getItem('rblink_draft');
+    if (d) sessionStorage.removeItem('rblink_draft');
+    return d || '';
+  });
+  useEffect(() => {
+    const f = () => { const d = sessionStorage.getItem('rblink_draft'); if (d) { setText(d); sessionStorage.removeItem('rblink_draft'); } };
+    window.addEventListener('rblink:draft', f);
+    return () => window.removeEventListener('rblink:draft', f);
+  }, []);
   const [cat, setCat] = useState('news');
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);

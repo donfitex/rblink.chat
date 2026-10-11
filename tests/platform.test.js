@@ -8,7 +8,7 @@ const signup=async(name,email)=>(await call('POST','/api/auth/signup',{name,emai
 const ws=t=>new Promise((ok,no)=>{const w=new WebSocket(`ws://localhost:${PORT}/ws?token=${t}`),got=[];w.onmessage=e=>got.push(JSON.parse(e.data));w.onopen=()=>ok({w,got});w.onerror=()=>no(new Error('ws'))});
 const wait=ms=>new Promise(r=>setTimeout(r,ms)),send=(c,type,payload)=>c.w.send(JSON.stringify({type,payload}));
 let admin,ann,bob;
-test.before(async()=>{mock=http.createServer((q,s)=>{let d='';q.on('data',c=>d+=c);q.on('end',()=>{const b=JSON.parse(d);s.setHeader('Content-Type','application/json');s.end(JSON.stringify({choices:[{message:{content:'echo: '+b.messages.at(-1).content}}]}))})}).listen(PORT+1000);await start();
+test.before(async()=>{mock=http.createServer((q,s)=>{let d='';q.on('data',c=>d+=c);q.on('end',()=>{const b=JSON.parse(d);s.setHeader('Content-Type','application/json');const last=b.messages.at(-1).content;s.end(JSON.stringify({choices:[{message:{content:last==='whatsys'?b.messages.filter(m=>m.role==='system').map(m=>m.content).join(' || '):'echo: '+last}}]}))})}).listen(PORT+1000);await start();
  admin=await signup('Admin','admin@x.com');ann=await signup('Ann','ann@x.com');bob=await signup('Bob','bob@x.com')});
 test.after(async()=>{await new Promise(r=>{proc.on('exit',r);proc.kill('SIGTERM')});mock.close();fs.rmSync(dir,{recursive:true,force:true})});
 
@@ -131,3 +131,26 @@ test('AI assistant: needs login, validates, answers via provider',async()=>{
 test('public group list hides private groups',async()=>{
  await call('PUT','/api/sync',{baseRev:0,data:{rblink_channels:JSON.stringify([{id:'a',name:'general',isPrivate:false,memberIds:['1','2']},{id:'b',name:'secret',isPrivate:true,memberIds:[]}])}},admin.token);
  const g=(await call('GET','/api/public/groups')).j;assert.deepEqual(g.map(x=>x.name),['general']);assert.equal(g[0].members,2)});
+
+test('live roles: audience by default, host promotes, speaker can step down, host cannot be demoted',async()=>{
+ const m=(await call('POST','/api/rooms',{type:'meeting'},admin.token)).j,ma=await ws(admin.token),mb=await ws(bob.token);
+ send(ma,'rtc:join',{code:m.code});await wait(100);send(mb,'rtc:join',{code:m.code});await wait(150);
+ assert.equal(mb.got.find(x=>x.type==='rtc:peers').payload.peers[0].state.speaker,true);[ma,mb].forEach(x=>x.w.close());await wait(100);
+ const r=(await call('POST','/api/rooms',{type:'live',mode:'video',title:'Talk'},ann.token)).j,h=await ws(ann.token),l=await ws(bob.token);
+ send(h,'rtc:join',{code:r.code});await wait(150);send(l,'rtc:join',{code:r.code});await wait(200);
+ assert.equal(l.got.find(x=>x.type==='rtc:peers').payload.peers[0].state.speaker,true);
+ assert.equal(h.got.find(x=>x.type==='rtc:joined').payload.state.speaker,false);
+ send(l,'rtc:role',{to:bob.user.id,speaker:true});await wait(150);assert.equal(h.got.some(x=>x.type==='rtc:state'),false);
+ send(l,'rtc:state',{hand:true,muted:false});await wait(150);assert.equal(h.got.find(x=>x.type==='rtc:state').payload.state.speaker,false);
+ send(h,'rtc:role',{to:bob.user.id,speaker:true});await wait(200);
+ const up=l.got.filter(x=>x.type==='rtc:state'&&x.payload.id===bob.user.id).pop();assert.equal(up.payload.state.speaker,true);assert.equal(up.payload.state.hand,false);
+ send(l,'rtc:role',{to:bob.user.id,speaker:false});await wait(200);
+ assert.equal(h.got.filter(x=>x.type==='rtc:state'&&x.payload.id===bob.user.id).pop().payload.state.speaker,false);
+ const before=h.got.length;send(l,'rtc:role',{to:ann.user.id,speaker:false});await wait(150);assert.equal(h.got.length,before);
+ [h,l].forEach(x=>x.w.close())});
+
+test('AI assistant: page context is passed as untrusted data and capped; app map is in the system prompt',async()=>{
+ const withCtx=(await call('POST','/api/ai',{messages:[{role:'user',content:'whatsys'}],context:'POST: hello world '+'x'.repeat(9000)},bob.token)).j.reply;
+ assert.match(withCtx,/rblink\.chat assistant/);assert.match(withCtx,/hello world/);assert.match(withCtx,/untrusted/);assert.ok(withCtx.length<9000);assert.ok(!withCtx.includes('x'.repeat(6500)));
+ const none=(await call('POST','/api/ai',{messages:[{role:'user',content:'whatsys'}]},bob.token)).j.reply;
+ assert.doesNotMatch(none,/untrusted/);assert.match(none,/\[\[go:PAGE\]\]/);assert.match(none,/market \(browse/);assert.match(none,/jobs\/applied/)});

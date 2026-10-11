@@ -7,9 +7,9 @@
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "client": "vite",
-    "server": "node server/index.js",
+    "server": "node --env-file-if-exists=.env server/index.js",
     "build": "vite build",
-    "start": "npm run build && node server/index.js",
+    "start": "npm run build && npm run serve",
     "test": "node tests/test-runner.js && node --test tests/merge.test.js tests/server.test.js tests/platform.test.js tests/resilience.test.js",
     "serve": "node --env-file-if-exists=.env server/index.js"
   },

@@ -24,13 +24,15 @@ export default function(R,c){
    if(m.type==='rtc:join'){const info=db.rooms[p.code];if(!info||info.endedAt)return wsSend(conn,{type:'rtc:error',payload:{message:'This room has ended or does not exist'}});
     leave(conn);const room=R_(p.code);if(!room.peers.has(conn.u.id)&&room.peers.size>=(info.type==='live'?MAX*4:MAX))return wsSend(conn,{type:'rtc:error',payload:{message:'This room is full'}});
     const old=room.peers.get(conn.u.id);if(old&&old!==conn){old.room=null;wsSend(old,{type:'rtc:error',payload:{message:'You joined from another tab'}})}
-    conn.room=p.code;conn.state={};room.peers.set(conn.u.id,conn);
+    conn.room=p.code;conn.state={speaker:info.type==='meeting'||info.hostId===conn.u.id};room.peers.set(conn.u.id,conn);
     wsSend(conn,{type:'rtc:peers',payload:{code:p.code,host:info.hostId,peers:[...room.peers.values()].filter(x=>x!==conn).map(au),chat:room.chat.slice(-100)}});to(p.code,{type:'rtc:joined',payload:au(conn)},conn);return}
    if(!conn.room||!r)return;const room=live.get(conn.room);if(!room)return;
    if(m.type==='rtc:signal'){const t=room.peers.get(p.to);if(t)wsSend(t,{type:'rtc:signal',payload:{from:conn.u.id,data:p.data}})}
-   else if(m.type==='rtc:state'){conn.state={muted:!!p.muted,cameraOff:!!p.cameraOff,hand:!!p.hand,sharing:!!p.sharing};to(conn.room,{type:'rtc:state',payload:{id:conn.u.id,state:conn.state}},conn)}
+   else if(m.type==='rtc:state'){conn.state={...conn.state,muted:!!p.muted,cameraOff:!!p.cameraOff,hand:!!p.hand,sharing:!!p.sharing};to(conn.room,{type:'rtc:state',payload:{id:conn.u.id,state:conn.state}},conn)}
    else if(m.type==='rtc:chat'){const text=String(p.text||'').trim().slice(0,500),audio=/^\/uploads\/[\w.-]+$/.test(p.audio||'')?p.audio:null;if(!text&&!audio)return;
     const msg={id:crypto.randomBytes(5).toString('hex'),from:{id:conn.u.id,name:conn.u.name,avatar:conn.u.avatar||''},text,audio,ts:Date.now()};room.chat.push(msg);if(room.chat.length>300)room.chat.shift();to(conn.room,{type:'rtc:chat',payload:msg})}
+   else if(m.type==='rtc:role'){const t=room.peers.get(p.to);if(!t||r.type!=='live'||t.u.id===r.hostId)return;
+    if(!(r.hostId===conn.u.id||(t===conn&&p.speaker===false)))return;t.state={...t.state,speaker:!!p.speaker,hand:false};to(conn.room,{type:'rtc:state',payload:{id:t.u.id,state:t.state}})}
    else if(m.type==='rtc:kick'&&r.hostId===conn.u.id){const t=room.peers.get(p.to);if(t&&t!==conn){wsSend(t,{type:'rtc:ended',payload:{code:conn.room,kicked:true}});leave(t)}}
    else if(m.type==='rtc:leave')leave(conn)}
  };

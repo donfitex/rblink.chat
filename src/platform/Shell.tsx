@@ -13,6 +13,9 @@ import { Groups, People } from './People';
 import { Profile, Settings } from './Profile';
 import { MarketRouter } from './Market';
 import { JobsRouter } from './Jobs';
+import { LiveLobby, MeetLobby } from './Meet';
+import { RoomPage } from './Room';
+import { AIPanel } from './AIPanel';
 
 const AUTH_PAGES = ['login', 'signup', 'join', 'phone', 'forgot', 'reset'];
 
@@ -69,7 +72,7 @@ export const Shell = () => {
 
   if (me === undefined) return <div className="flex h-full items-center justify-center bg-[#1A1D21] text-[#8D9197]">Loading rblink.chat...</div>;
 
-  const nav: [string, string][] = [['feed', 'Feed'], ['market', 'Market'], ['jobs', 'Jobs'], ['people', 'People'], ['groups', 'Groups']];
+  const nav: [string, string][] = [['feed', 'Feed'], ['market', 'Market'], ['jobs', 'Jobs'], ['meet', 'Meet'], ['live', 'Live'], ['people', 'People'], ['groups', 'Groups']];
   if (me) nav.push(['chat', 'Chat']);
 
   let body: React.ReactNode;
@@ -78,6 +81,9 @@ export const Shell = () => {
   } else if (page === 'post' && arg) body = <PostPage id={arg} />;
   else if (page === 'market') body = <MarketRouter arg={arg} />;
   else if (page === 'jobs') body = <JobsRouter arg={arg} />;
+  else if (page === 'meet') body = <MeetLobby />;
+  else if (page === 'live') body = <LiveLobby />;
+  else if (page === 'room' && arg) body = <RoomPage key={arg} code={arg} />;
   else if (page === 'people') body = <People />;
   else if (page === 'groups') body = <Groups />;
   else if (page === 'profile' && arg) body = <Profile id={arg} />;
@@ -102,7 +108,7 @@ export const Shell = () => {
           <button onClick={() => go('feed')} className="text-lg font-extrabold text-white">r<span className="text-[#1D9BD1]">blink</span>.chat</button>
           <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
             {nav.map(([k, label]) => (
-              <button key={k} onClick={() => go(k)} className={`shrink-0 rounded-md px-3 py-1.5 text-sm ${page === k || (k === 'feed' && !AUTH_PAGES.concat(['market', 'jobs', 'people', 'groups', 'chat', 'profile', 'settings']).includes(page)) ? 'bg-[#2D3136] text-white' : 'text-[#B9BBBE] hover:bg-[#2D3136]'}`}>{label}</button>
+              <button key={k} onClick={() => go(k)} className={`shrink-0 rounded-md px-3 py-1.5 text-sm ${page === k || (k === 'feed' && !AUTH_PAGES.concat(['market', 'jobs', 'meet', 'live', 'room', 'people', 'groups', 'chat', 'profile', 'settings']).includes(page)) ? 'bg-[#2D3136] text-white' : 'text-[#B9BBBE] hover:bg-[#2D3136]'}`}>{label}</button>
             ))}
           </nav>
           {me ? (
@@ -123,6 +129,7 @@ export const Shell = () => {
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">{body}</main>
       </div>
+      {me && page !== 'room' && <AIPanel route={route} />}
       {ask && !me && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setAsk(false)}>
           <div className={`${card} w-full max-w-sm p-6 text-center`} onClick={(e) => e.stopPropagation()}>
