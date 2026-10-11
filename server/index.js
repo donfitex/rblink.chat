@@ -1,21 +1,25 @@
 // rblink.chat server: zero runtime dependencies (Node 18+). Auth, persistence, sync, uploads, WebSocket.
 import http from 'http';import crypto from 'crypto';import fs from 'fs';import path from 'path';import {fileURLToPath} from 'url';
-import {sendMail,sendSms} from './mail.js';import authMod from './auth.js';import socialMod from './social.js';import workMod from './work.js';import roomsMod from './rooms.js';import aiMod from './ai.js';
+import {sendMail,sendSms} from './mail.js';import authMod from './auth.js';import socialMod from './social.js';import workMod from './work.js';import roomsMod from './rooms.js';import aiMod from './ai.js';import {remote,loadRemote,pingRemote,saveRemote,putFile,publicUrl} from './store.js';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const DATA=path.resolve(process.env.DATA_DIR||path.join(root,'data')),UP=path.join(DATA,'uploads'),DBF=path.join(DATA,'db.json');
 const GOOGLE=process.env.GOOGLE_CLIENT_ID||'',KEYS=['rblink_workspace','rblink_users','rblink_channels','rblink_dms','rblink_messages'];
 fs.mkdirSync(UP,{recursive:true});
 let db={secret:crypto.randomBytes(32).toString('hex'),users:[],rev:0,sync:{}};
 try{db={...db,...JSON.parse(fs.readFileSync(DBF,'utf8'))}}catch{}
+if(remote){try{const r=await loadRemote();if(r)db={...db,...r};console.log(r?'[startup] database loaded from Supabase':'[startup] Supabase database is empty: starting from local data')}catch(e){console.error('[startup] cannot read from Supabase:',e.message);process.exit(1)}}
 const SECRET=process.env.SESSION_SECRET||db.secret;
-let storage='ok';
+let storage='ok',pushing=false,again=false;
+async function pushRemote(){if(pushing){again=true;return}pushing=true;try{await saveRemote(db);storage='ok'}catch(e){storage='error: '+e.message;console.error('[db] Supabase save failed:',e.message)}pushing=false;if(again){again=false;pushRemote()}}
 const flush=()=>{const data=JSON.stringify(db),tmp=DBF+'.tmp';
- try{fs.writeFileSync(tmp,data);try{fs.renameSync(tmp,DBF)}catch{fs.writeFileSync(DBF,data);try{fs.unlinkSync(tmp)}catch{}}storage='ok'}
- catch(e){storage='error: '+(e.code||e.message);console.error('[db] could not save to',DBF,'-',e.message)}};
+ try{fs.writeFileSync(tmp,data);try{fs.renameSync(tmp,DBF)}catch{fs.writeFileSync(DBF,data);try{fs.unlinkSync(tmp)}catch{}}if(!remote)storage='ok'}
+ catch(e){if(!remote){storage='error: '+(e.code||e.message);console.error('[db] could not save to',DBF,'-',e.message)}}
+ if(remote)pushRemote()};
+const drain=async()=>{for(let i=0;i<60&&(pushing||again);i++)await new Promise(r=>setTimeout(r,100))};
 let st;const save=()=>{clearTimeout(st);st=setTimeout(flush,200)};flush();
-console.log(storage==='ok'?`[startup] data folder is writable: ${DATA}`:`[startup] PROBLEM: cannot write to ${DATA} (${storage}). Check the folder permissions.`);
+console.log(remote?`[startup] saving to Supabase (plus a local copy in ${DATA})`:storage==='ok'?`[startup] data folder is writable: ${DATA}`:`[startup] PROBLEM: cannot write to ${DATA} (${storage}). Check the folder permissions.`);
 for(const ev of['uncaughtException','unhandledRejection'])process.on(ev,e=>console.error('[error]',e&&e.stack||e));
-for(const sg of['SIGTERM','SIGINT'])process.on(sg,()=>{flush();process.exit(0)});
+for(const sg of['SIGTERM','SIGINT'])process.on(sg,async()=>{flush();await drain();process.exit(0)});
 // ---- auth helpers
 const sign=uid=>{const p=Buffer.from(JSON.stringify({uid,exp:Date.now()+30*864e5})).toString('base64url');return p+'.'+crypto.createHmac('sha256',SECRET).update(p).digest('base64url')};
 const verify=t=>{try{const[p,s]=String(t).split('.'),e=crypto.createHmac('sha256',SECRET).update(p).digest('base64url');if(s.length!==e.length||!crypto.timingSafeEqual(Buffer.from(s),Buffer.from(e)))return;const d=JSON.parse(Buffer.from(p,'base64url'));return d.exp>Date.now()?db.users.find(u=>u.id===d.uid):undefined}catch{}};
@@ -24,18 +28,24 @@ const hash=pw=>{const s=crypto.randomBytes(16).toString('hex');return s+':'+cryp
 const check=(pw,h)=>{const[s,k]=String(h).split(':');return !!k&&crypto.timingSafeEqual(crypto.scryptSync(pw,s,64),Buffer.from(k,'hex'))};
 const pub=u=>({id:u.id,name:u.name,email:u.email||'',phone:u.phone||'',avatar:u.avatar||'',role:u.role,recruiter:!!u.recruiter,headline:u.headline||''});
 const mk=(name,email,pw,extra={})=>{const u={id:'u_'+crypto.randomBytes(6).toString('hex'),name:name.slice(0,60),email:email.toLowerCase(),pw:pw?hash(pw):'',role:db.users.length?'member':'owner',avatar:'',createdAt:new Date().toISOString(),...extra};db.users.push(u);flush();return u};
+const prod=process.env.NODE_ENV==='production',TRUST=process.env.TRUST_PROXY==='1'||(process.env.TRUST_PROXY!=='0'&&prod);
+const ipOf=q=>TRUST&&q.headers['x-forwarded-for']?String(q.headers['x-forwarded-for']).split(',')[0].trim():q.socket.remoteAddress;
+const apiHits=new Map(),API_LIMIT=+process.env.API_RATE_LIMIT||1200,apiLimited=ip=>{const n=Date.now(),a=(apiHits.get(ip)||[]).filter(t=>n-t<6e4);a.push(n);apiHits.set(ip,a);return a.length>API_LIMIT};
+setInterval(()=>{const n=Date.now();for(const m of[apiHits,hits])for(const[k,v]of m)if(!v.length||n-v[v.length-1]>6e4)m.delete(k)},3e5).unref();
 const hits=new Map(),limited=ip=>{const n=Date.now(),a=(hits.get(ip)||[]).filter(t=>n-t<6e4);a.push(n);hits.set(ip,a);return a.length>30};
 // ---- http helpers
 const MAXB=(+process.env.UPLOAD_MAX_MB||100)*1024*1024,OKEXT=new Set('.png .jpg .jpeg .gif .webp .avif .jfif .jpe .bmp .heic .heif .mp4 .webm .mov .m4v .ogv .mp3 .wav .ogg .m4a .aac .pdf .doc .docx .xls .xlsx .ppt .pptx .txt .csv .zip'.split(' '));
 const body=(q,max=2e7)=>new Promise((ok,no)=>{const c=[];let n=0,big=false;q.on('data',d=>{n+=d.length;if(n>max)big=true;else c.push(d)});q.on('end',()=>big?no(Object.assign(new Error('too big'),{code:413})):ok(Buffer.concat(c)));q.on('error',no)});
 const json=async q=>JSON.parse((await body(q)).toString()||'{}');
-const SEC={'X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'strict-origin-when-cross-origin','Permissions-Policy':'camera=(self), microphone=(self), display-capture=(self), geolocation=()'};
+let SB='';try{SB=new URL(process.env.SUPABASE_URL).origin}catch{}
+const CSP=`default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' ws: wss: https://accounts.google.com ${SB}; frame-src https://accounts.google.com; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'`;
+const SEC={'X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'strict-origin-when-cross-origin','Permissions-Policy':'camera=(self), microphone=(self), display-capture=(self), geolocation=()',...(prod?{'Strict-Transport-Security':'max-age=15552000'}:{}),[process.env.CSP_ENFORCE==='1'?'Content-Security-Policy':'Content-Security-Policy-Report-Only']:CSP};
 const send=(s,c,o,h={})=>{s.writeHead(c,{'Content-Type':'application/json',...SEC,...h});s.end(JSON.stringify(o))};
 const session=(q,s,u)=>send(s,200,{user:pub(u),token:sign(u.id)},{'Set-Cookie':`rblink_token=${sign(u.id)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${q.headers['x-forwarded-proto']==='https'?'; Secure':''}`});
 // ---- routes
 const open=new Set(['GET /api/health','GET /api/config','POST /api/auth/signup','POST /api/auth/login','POST /api/auth/google','POST /api/auth/logout']);
 const R={
- 'GET /api/health':(q,s)=>send(s,200,{status:'ok',storage,service:'rblink.chat server',version:'3.0.1',timestamp:new Date().toISOString()}),
+ 'GET /api/health':async(q,s,u,P,x)=>{if(remote&&x.searchParams.get('deep')){try{await pingRemote()}catch(e){return send(s,503,{status:'degraded',error:e.message})}}send(s,200,{status:'ok',mode:remote?'supabase':'local',storage,service:'rblink.chat server',version:'4.0.0',timestamp:new Date().toISOString()})},
  'GET /api/config':(q,s)=>send(s,200,{googleClientId:GOOGLE}),
  'POST /api/auth/signup':async(q,s)=>{const{name,email,password}=await json(q),e=String(email||'').trim().toLowerCase();
   if(!String(name||'').trim()||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))return send(s,400,{error:'Enter your name and a valid email'});
@@ -63,7 +73,7 @@ const R={
     if(!OKEXT.has(ext))ext=EXTBY[ct]||ext;
     if(!OKEXT.has(ext))return send(s,415,{error:'This file type is not allowed'});
     const fname=`file-${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`;
-    try{fs.writeFileSync(path.join(UP,fname),data)}catch(e){console.error('[upload]',e.message);return send(s,500,{error:'The server could not save the file ('+(e.code||e.message)+'). Check the data folder.'})}
+    try{if(remote)await putFile(fname,data,ct);else fs.writeFileSync(path.join(UP,fname),data)}catch(e){console.error('[upload]',e.message);return send(s,500,{error:'The server could not save the file ('+(e.code||e.message)+'). Check the data folder.'})}
     files.push({id:'att_'+crypto.randomBytes(5).toString('hex'),name,size:data.length,type:ct,url:'/uploads/'+fname,uploadedAt:new Date().toISOString()})}
    i=j}
   files.length?send(s,200,{success:true,files}):send(s,400,{error:'No files uploaded'})}
@@ -78,11 +88,14 @@ const pats=[];
 const route=key=>{if(R[key])return{fn:R[key],P:{}};const i=key.indexOf(' '),m=key.slice(0,i),p=key.slice(i+1);for(const x of pats){if(x.m!==m)continue;const r=x.re.exec(p);if(r)return{fn:R[x.key],P:Object.fromEntries(x.names.map((n,j)=>[n,decodeURIComponent(r[j+1])]))}}};
 const server=http.createServer(async(q,s)=>{
  try{const url=new URL(q.url,'http://x'),key=q.method+' '+url.pathname,rt=route(key);
-  if(rt){const{fn,P}=rt;if(key.includes('/auth/')&&key!=='GET /api/auth/me'&&limited(q.socket.remoteAddress))return send(s,429,{error:'Too many attempts, wait a minute'});
+  if(url.pathname.startsWith('/api/')&&apiLimited(ipOf(q)))return send(s,429,{error:'Too many requests. Please slow down.'});
+  if(rt){const{fn,P}=rt;if(key.includes('/auth/')&&key!=='GET /api/auth/me'&&limited(ipOf(q)))return send(s,429,{error:'Too many attempts, wait a minute'});
    const u=authOf(q,url);if(!(open.has(key)||fn.open)&&!u)return send(s,401,{error:'Please log in'});return await fn(q,s,u,P,url)}
   if(url.pathname.startsWith('/api/'))return send(s,404,{error:'Not found'});
   const p=decodeURIComponent(url.pathname);
-  if(p.startsWith('/uploads/'))return serve(s,UP,p.slice(9),true)||send(s,404,{error:'Not found'});
+  if(p.startsWith('/uploads/')){const name=p.slice(9);if(serve(s,UP,name,true))return;
+   if(remote&&/^[\w.-]+$/.test(name)){s.writeHead(302,{Location:publicUrl(name),'Cache-Control':'public, max-age=86400',...SEC});return s.end()}
+   return send(s,404,{error:'Not found'})}
   const dist=path.join(root,'dist');if(!fs.existsSync(dist)){s.writeHead(503);return s.end('Frontend not built. Run: npm run build')}
   if(!serve(s,dist,p==='/'?'index.html':p.slice(1)))serve(s,dist,'index.html')
  }catch(e){console.error('[error]',q.method,q.url,e&&e.stack||e);

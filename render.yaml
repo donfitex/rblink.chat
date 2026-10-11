@@ -1,0 +1,36 @@
+# Render "Blueprint": creates the free web service for you. Secret values (sync: false) are typed in the Render dashboard.
+services:
+  - type: web
+    name: rblink-chat
+    runtime: node
+    plan: free
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: node server/index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: APP_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: rblink-uploads
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: MAILGUN_API_KEY
+        sync: false
+      - key: MAILGUN_DOMAIN
+        sync: false
+      - key: AI_BASE_URL
+        sync: false
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        sync: false
