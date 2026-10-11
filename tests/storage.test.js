@@ -43,7 +43,7 @@ test('security headers: CSP report-only by default, enforced on request, HSTS on
  assert.match(h.get('content-security-policy-report-only'),/default-src 'self'/);assert.equal(h.get('content-security-policy'),null);assert.equal(h.get('strict-transport-security'),null);
  assert.equal(h.get('x-frame-options'),'DENY');await stop(a.proc);
  const b=await startServer({CSP_ENFORCE:'1',NODE_ENV:'production',SESSION_SECRET:'x'.repeat(32)}),h2=(await fetch(b.B+'/api/health')).headers;
- assert.match(h2.get('content-security-policy'),/object-src 'none'/);assert.match(h2.get('strict-transport-security'),/max-age/);await stop(b.proc)});
+ assert.match(h2.get('content-security-policy'),/object-src 'none'/);assert.match(h2.get('content-security-policy'),/fonts\.gstatic\.com/);assert.match(h2.get('content-security-policy'),/fonts\.googleapis\.com/);assert.match(h2.get('strict-transport-security'),/max-age/);await stop(b.proc)});
 
 test('rate limit: per visitor address, and the real address is used behind a proxy',async()=>{
  const a=await startServer({API_RATE_LIMIT:'8',TRUST_PROXY:'1'});
