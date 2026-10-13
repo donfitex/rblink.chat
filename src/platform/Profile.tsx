@@ -80,6 +80,19 @@ export const Settings = () => {
   const [soc, setSoc] = useState<any>({});
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [privacyBusy, setPrivacyBusy] = useState(false);
+  const [privacyMsg, setPrivacyMsg] = useState('');
+  const [privacy, setPrivacy] = useState<any>({
+    searchVisibility: 'everyone',
+    messageVisibility: 'everyone',
+    allowDirectMessages: true,
+    allowMentions: true,
+    showPresence: true,
+    showEmail: false
+  });
+  const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
+  const [mutedUserIds, setMutedUserIds] = useState<string[]>([]);
+  const [sessions, setSessions] = useState<any[]>([]);
   const [reqs, setReqs] = useState<any[]>([]);
   const [invites, setInvites] = useState<any[]>([]);
 
@@ -87,8 +100,24 @@ export const Settings = () => {
     api('GET', '/api/whatsapp-requests').then(setReqs).catch(() => {});
     api('GET', '/api/invites/mine').then(setInvites).catch(() => {});
   };
+  const loadPrivacy = () => {
+    api('GET', '/api/me/privacy').then((r) => {
+      setPrivacy({
+        searchVisibility: r.privacy?.searchVisibility || 'everyone',
+        messageVisibility: r.privacy?.messageVisibility || 'everyone',
+        allowDirectMessages: r.privacy?.allowDirectMessages ?? true,
+        allowMentions: r.privacy?.allowMentions ?? true,
+        showPresence: r.privacy?.showPresence ?? true,
+        showEmail: r.privacy?.showEmail ?? false
+      });
+      setBlockedUserIds(r.blockedUserIds || []);
+      setMutedUserIds(r.mutedUserIds || []);
+      setSessions(r.sessions || []);
+    }).catch(() => {});
+  };
   useEffect(() => {
     api('GET', '/api/me/profile').then((p) => { setF({ name: p.name, headline: p.headline, bio: p.bio, location: p.location, avatar: p.avatar }); setSoc(p.socials || {}); }).catch(() => {});
+    loadPrivacy();
     loadSide();
   }, []);
   if (!f) return <p className="p-6 text-center text-[#8D9197]">Loading...</p>;
@@ -121,6 +150,36 @@ export const Settings = () => {
   };
   const answer = async (r: any, approve: boolean) => { await api('POST', '/api/whatsapp-requests/' + r.id, { approve }).catch(() => {}); loadSide(); };
   const newInvite = async () => { await api('POST', '/api/invites', {}).catch(() => {}); loadSide(); };
+  const savePrivacy = async () => {
+    setPrivacyBusy(true);
+    setPrivacyMsg('');
+    try {
+      const res = await api('PATCH', '/api/me/privacy', privacy);
+      setPrivacy(res.privacy || privacy);
+      setPrivacyMsg('Privacy saved');
+    } catch (er: any) {
+      setPrivacyMsg(er.message);
+    }
+    setPrivacyBusy(false);
+  };
+  const toggleBlock = async (userId: string) => {
+    try {
+      const res = await api('POST', `/api/users/${userId}/block`);
+      setBlockedUserIds(res.blockedUserIds || []);
+    } catch (er: any) { setPrivacyMsg(er.message); }
+  };
+  const toggleMute = async (userId: string) => {
+    try {
+      const res = await api('POST', `/api/users/${userId}/mute`);
+      setMutedUserIds(res.mutedUserIds || []);
+    } catch (er: any) { setPrivacyMsg(er.message); }
+  };
+  const revokeSession = async (sessionId: string) => {
+    try {
+      await api('POST', `/api/me/sessions/${sessionId}/revoke`);
+      setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, revoked: true } : s));
+    } catch (er: any) { setPrivacyMsg(er.message); }
+  };
   const copy = (t: string) => navigator.clipboard.writeText(t).then(() => alert('Link copied'), () => prompt('Copy this link', t));
 
   return (
@@ -163,6 +222,54 @@ export const Settings = () => {
           <button className={btn} disabled={busy} onClick={save}>{busy ? 'Working...' : 'Save changes'}</button>
           {msg && <span className={`text-sm ${msg === 'Saved!' ? 'text-green-400' : 'text-red-400'}`}>{msg}</span>}
         </div>
+      </div>
+      <div className={`${card} space-y-3 p-5`}>
+        <div className="flex items-center justify-between"><h2 className="text-lg font-bold text-white">Privacy & security</h2></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs text-[#8D9197]">Who can find you in search
+            <select className={field} value={privacy.searchVisibility} onChange={(e) => setPrivacy({ ...privacy, searchVisibility: e.target.value })}>
+              <option value="everyone">Everyone</option>
+              <option value="contacts">Contacts only</option>
+              <option value="nobody">Nobody</option>
+            </select>
+          </label>
+          <label className="text-xs text-[#8D9197]">Who can message you
+            <select className={field} value={privacy.messageVisibility} onChange={(e) => setPrivacy({ ...privacy, messageVisibility: e.target.value })}>
+              <option value="everyone">Everyone</option>
+              <option value="contacts">Contacts only</option>
+              <option value="nobody">Nobody</option>
+            </select>
+          </label>
+        </div>
+        <label className="flex items-center justify-between gap-2 text-sm text-white"><span>Allow direct messages</span><input type="checkbox" checked={privacy.allowDirectMessages} onChange={(e) => setPrivacy({ ...privacy, allowDirectMessages: e.target.checked })} /></label>
+        <label className="flex items-center justify-between gap-2 text-sm text-white"><span>Allow @mentions</span><input type="checkbox" checked={privacy.allowMentions} onChange={(e) => setPrivacy({ ...privacy, allowMentions: e.target.checked })} /></label>
+        <label className="flex items-center justify-between gap-2 text-sm text-white"><span>Show presence status</span><input type="checkbox" checked={privacy.showPresence} onChange={(e) => setPrivacy({ ...privacy, showPresence: e.target.checked })} /></label>
+        <label className="flex items-center justify-between gap-2 text-sm text-white"><span>Show email in profile</span><input type="checkbox" checked={privacy.showEmail} onChange={(e) => setPrivacy({ ...privacy, showEmail: e.target.checked })} /></label>
+        <div className="flex items-center gap-3">
+          <button className={btn} disabled={privacyBusy} onClick={savePrivacy}>{privacyBusy ? 'Saving...' : 'Save privacy'}</button>
+          {privacyMsg && <span className={`text-sm ${privacyMsg === 'Privacy saved' ? 'text-green-400' : 'text-red-400'}`}>{privacyMsg}</span>}
+        </div>
+      </div>
+      <div className={`${card} space-y-3 p-5`}>
+        <h2 className="text-lg font-bold text-white">Blocked & muted</h2>
+        {blockedUserIds.length === 0 && mutedUserIds.length === 0 ? <p className="text-sm text-[#8D9197]">You have no blocked or muted contacts.</p> : <div className="space-y-2 text-sm text-white">{[...new Set([...blockedUserIds, ...mutedUserIds])].map((id) => (
+          <div key={id} className="flex items-center justify-between gap-2 rounded-md bg-[#222529] p-2">
+            <span className="truncate">{id}</span>
+            <div className="flex gap-2">
+              <button className={btn2} onClick={() => toggleBlock(id)}>{blockedUserIds.includes(id) ? 'Unblock' : 'Block'}</button>
+              <button className={btn2} onClick={() => toggleMute(id)}>{mutedUserIds.includes(id) ? 'Unmute' : 'Mute'}</button>
+            </div>
+          </div>
+        ))}</div>}
+      </div>
+      <div className={`${card} space-y-3 p-5`}>
+        <h2 className="text-lg font-bold text-white">Active sessions</h2>
+        {sessions.length === 0 ? <p className="text-sm text-[#8D9197]">No active sessions.</p> : <div className="space-y-2 text-sm text-white">{sessions.filter((s) => !s.revoked).map((s) => (
+          <div key={s.id} className="flex items-center justify-between gap-3 rounded-md bg-[#222529] p-2">
+            <div className="min-w-0"><div className="truncate font-medium">{s.device || 'Browser'}</div><div className="text-xs text-[#8D9197]">{s.userAgent || 'Unknown device'} · {s.ip || 'unknown IP'}</div></div>
+            <button className={btn2} onClick={() => revokeSession(s.id)}>Revoke</button>
+          </div>
+        ))}</div>}
       </div>
       <div className={`${card} space-y-3 p-5`}>
         <div className="flex items-center justify-between"><h2 className="text-lg font-bold text-white">Invite friends</h2><button className={btn} onClick={newInvite}>New invite link</button></div>

@@ -178,6 +178,10 @@ export default function (R, c) {
   R['POST /api/dms'] = async (q, s, u) => {
     const { userId } = await json(q), t = db.users.find((x) => x.id === userId);
     if (!t || t.id === u.id) return send(s, 400, { error: 'Choose another member' });
+    if ((u.blockedUserIds || []).includes(t.id) || (t.blockedUserIds || []).includes(u.id)) return send(s, 403, { error: 'This user is not available for direct messaging' });
+    const tp = t.privacy || {}, mode = tp.messageVisibility || 'everyone';
+    if (mode === 'nobody') return send(s, 403, { error: 'This user does not accept messages right now' });
+    if (mode === 'contacts' && !((db.sync && db.sync.rblink_dms) ? JSON.parse(db.sync.rblink_dms || '[]').some((x) => (x.participantIds || []).includes(u.id) && (x.participantIds || []).includes(t.id)) : false)) return send(s, 403, { error: 'This user only accepts messages from contacts' });
     const st = parts(db.sync);
     let d = st.dms.find((x) => !x.isGroup && (x.participantIds || []).length === 2 && x.participantIds.includes(u.id) && x.participantIds.includes(t.id));
     if (!d) {
