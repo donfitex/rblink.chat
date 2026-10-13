@@ -16,6 +16,8 @@ import { JobsRouter } from './Jobs';
 import { LiveLobby, MeetLobby } from './Meet';
 import { RoomPage } from './Room';
 import { AIPanel } from './AIPanel';
+import { NotificationsPage } from './Notifications';
+import { InboxPage } from './Inbox';
 
 const AUTH_PAGES = ['login', 'signup', 'join', 'phone', 'forgot', 'reset'];
 
@@ -25,6 +27,7 @@ export const Shell = () => {
   const [gid, setGid] = useState('');
   const [ask, setAsk] = useState(false);
   const [reqs, setReqs] = useState(0);
+  const [counts, setCounts] = useState({ unread: 0, inbox: 0 });
   const [welcome, setWelcome] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -42,6 +45,16 @@ export const Shell = () => {
     f();
     const t = setInterval(f, 30000);
     return () => clearInterval(t);
+  }, [me && me.id]);
+
+  // Notification bell and inbox badges
+  useEffect(() => {
+    if (!me) { setCounts({ unread: 0, inbox: 0 }); return; }
+    const f = () => api('GET', '/api/notifications/summary').then(setCounts).catch(() => {});
+    f();
+    const t = setInterval(f, 20000);
+    window.addEventListener('rblink:counts', f);
+    return () => { clearInterval(t); window.removeEventListener('rblink:counts', f); };
   }, [me && me.id]);
 
   // First-time welcome
@@ -73,7 +86,7 @@ export const Shell = () => {
   if (me === undefined) return <div className="flex h-full items-center justify-center bg-[#1A1D21] text-[#8D9197]">Loading rblink.chat...</div>;
 
   const nav: [string, string][] = [['feed', 'Feed'], ['market', 'Market'], ['jobs', 'Jobs'], ['meet', 'Meet'], ['live', 'Live'], ['people', 'People'], ['groups', 'Groups']];
-  if (me) nav.push(['chat', 'Chat']);
+  if (me) { nav.push(['chat', 'Chat']); nav.push(['inbox', 'Inbox']); }
 
   let body: React.ReactNode;
   if (AUTH_PAGES.includes(page)) {
@@ -84,6 +97,8 @@ export const Shell = () => {
   else if (page === 'meet') body = <MeetLobby />;
   else if (page === 'live') body = <LiveLobby />;
   else if (page === 'room' && arg) body = <RoomPage key={arg} code={arg} />;
+  else if (page === 'inbox') body = <InboxPage />;
+  else if (page === 'notifications') body = <NotificationsPage />;
   else if (page === 'people') body = <People />;
   else if (page === 'groups') body = <Groups />;
   else if (page === 'profile' && arg) body = <Profile id={arg} />;
@@ -108,11 +123,14 @@ export const Shell = () => {
           <button onClick={() => go('feed')} className="text-lg font-extrabold text-white">r<span className="text-[#1D9BD1]">blink</span>.chat</button>
           <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
             {nav.map(([k, label]) => (
-              <button key={k} onClick={() => go(k)} className={`shrink-0 rounded-md px-3 py-1.5 text-sm ${page === k || (k === 'feed' && !AUTH_PAGES.concat(['market', 'jobs', 'meet', 'live', 'room', 'people', 'groups', 'chat', 'profile', 'settings']).includes(page)) ? 'bg-[#2D3136] text-white' : 'text-[#B9BBBE] hover:bg-[#2D3136]'}`}>{label}</button>
+              <button key={k} onClick={() => go(k)} className={`shrink-0 rounded-md px-3 py-1.5 text-sm ${page === k || (k === 'feed' && !AUTH_PAGES.concat(['market', 'jobs', 'meet', 'live', 'room', 'people', 'groups', 'chat', 'inbox', 'notifications', 'profile', 'settings']).includes(page)) ? 'bg-[#2D3136] text-white' : 'text-[#B9BBBE] hover:bg-[#2D3136]'}`}>{label}{k === 'inbox' && counts.inbox > 0 && <span className="ml-1 rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white">{counts.inbox}</span>}</button>
             ))}
           </nav>
           {me ? (
             <div className="flex shrink-0 items-center gap-2">
+              <button onClick={() => go('notifications')} className="relative rounded-md px-2 py-1 text-lg hover:bg-[#2D3136]" title="Notifications">
+                🔔{counts.unread > 0 && <span className="absolute -right-0.5 -top-0.5 rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white">{counts.unread > 9 ? '9+' : counts.unread}</span>}
+              </button>
               <button onClick={() => go('settings')} className="relative flex items-center gap-2 rounded-md px-1 py-1 hover:bg-[#2D3136]" title="Profile and settings">
                 <Avatar user={me} size={32} />
                 {reqs > 0 && <span className="absolute -right-1 -top-1 rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white">{reqs}</span>}

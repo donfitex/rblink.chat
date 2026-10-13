@@ -53,7 +53,11 @@ export async function startSync(remount: () => void) {
   }
   const s = await (await api('GET', '/api/sync')).json();
   rev = s.rev;
-  if (s.rev > 0) writeLocal(s.data); // the server copy is the truth
+  if (s.rev > 0) {
+    writeLocal(s.data); // the server copy is the truth
+    SYNC_KEYS.forEach((k) => { if (typeof s.data[k] !== 'string') localStorage.removeItem(k); }); // forget stale local copies, e.g. old sample data
+    last = snapshot();
+  }
   clearInterval(poller); poller = setInterval(poll, 3000);
 }
 

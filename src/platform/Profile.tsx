@@ -26,6 +26,7 @@ export const Profile = ({ id }: { id: string }) => {
   if (!p) return <p className="p-6 text-center text-[#8D9197]">Loading...</p>;
 
   const self = p.waStatus === 'self';
+  const startDm = async () => { try { const r = await api('POST', '/api/dms', { userId: p.id }); localStorage.setItem('rblink_current_channel', r.id); go('chat'); } catch (e: any) { alert(e.message); } };
   const requestWa = async () => { try { await api('POST', `/api/users/${p.id}/whatsapp-request`); await load(); } catch (e: any) { alert(e.message); } };
   const socials = Object.entries(p.socials || {}).filter(([, v]) => v);
   const tabs = self ? ['posts', 'reshared', 'saved'] : ['posts', 'reshared'];
@@ -42,6 +43,7 @@ export const Profile = ({ id }: { id: string }) => {
             <p className="text-xs text-[#8D9197]">{[p.location, 'Joined ' + new Date(p.joinedAt).toLocaleDateString(), p.posts + ' posts'].filter(Boolean).join(' · ')}</p>
           </div>
           {self && <button className={btn2} onClick={() => go('settings')}>Edit profile</button>}
+          {!self && <button className={btn} onClick={startDm}>✉ Message</button>}
         </div>
         {p.bio && <p className="mt-4 whitespace-pre-wrap text-sm text-[#D1D2D3]">{p.bio}</p>}
         {(socials.length > 0 || p.hasWhatsapp) && (

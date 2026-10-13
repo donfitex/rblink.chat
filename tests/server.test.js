@@ -25,9 +25,9 @@ test('private routes need login; forged token rejected',async()=>{
  assert.equal((await call('GET','/api/sync')).status,401);assert.equal((await call('GET','/api/sync',null,A.token+'x')).status,401)});
 test('google login reports not configured',async()=>{assert.equal((await call('POST','/api/auth/google',{credential:'x'})).status,501)});
 test('sync: save, read, reject stale revision',async()=>{
- let r=await call('PUT','/api/sync',{baseRev:0,data:{rblink_messages:'{"c1":[{"id":"m1"}]}'}},A.token);assert.equal((await r.json()).rev,1);
+ const msg=JSON.stringify({c1:[{id:'m1',senderId:A.user.id,content:'hi'}]});let r=await call('PUT','/api/sync',{baseRev:0,data:{rblink_messages:msg}},A.token);assert.equal((await r.json()).rev,1);
  r=await call('PUT','/api/sync',{baseRev:0,data:{rblink_messages:'{}'}},Bu.token);assert.equal(r.status,409);
- const s=await (await call('GET','/api/sync',null,Bu.token)).json();assert.equal(s.rev,1);assert.equal(s.data.rblink_messages,'{"c1":[{"id":"m1"}]}')});
+ const s=await (await call('GET','/api/sync',null,Bu.token)).json();assert.equal(s.rev,1);assert.equal(JSON.parse(s.data.rblink_messages).c1[0].content,'hi')});
 test('upload stores allowed files, blocks html, needs login',async()=>{
  const f=new FormData();f.append('files',new Blob(['hello']),'a.txt');f.append('files',new Blob(['x']),'b.txt');
  const r=await fetch(B+'/api/upload',{method:'POST',body:f,headers:{Cookie:'rblink_token='+A.token}}),j=await r.json();

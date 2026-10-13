@@ -1,6 +1,6 @@
 // rblink.chat server: zero runtime dependencies (Node 18+). Auth, persistence, sync, uploads, WebSocket.
 import http from 'http';import crypto from 'crypto';import fs from 'fs';import path from 'path';import {fileURLToPath} from 'url';
-import {sendMail,sendSms} from './mail.js';import authMod from './auth.js';import socialMod from './social.js';import workMod from './work.js';import roomsMod from './rooms.js';import aiMod from './ai.js';import {remote,loadRemote,pingRemote,saveRemote,putFile,publicUrl} from './store.js';
+import {sendMail,sendSms} from './mail.js';import authMod from './auth.js';import socialMod from './social.js';import workMod from './work.js';import roomsMod from './rooms.js';import aiMod from './ai.js';import notifyMod from './notify.js';import chatMod from './chatsync.js';import {purgeDemo} from './demo.js';import {remote,loadRemote,pingRemote,saveRemote,putFile,publicUrl} from './store.js';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const DATA=path.resolve(process.env.DATA_DIR||path.join(root,'data')),UP=path.join(DATA,'uploads'),DBF=path.join(DATA,'db.json');
 const GOOGLE=process.env.GOOGLE_CLIENT_ID||'',KEYS=['rblink_workspace','rblink_users','rblink_channels','rblink_dms','rblink_messages'];
@@ -8,28 +8,7 @@ fs.mkdirSync(UP,{recursive:true});
 let db={secret:crypto.randomBytes(32).toString('hex'),users:[],rev:0,sync:{}};
 try{db={...db,...JSON.parse(fs.readFileSync(DBF,'utf8'))}}catch{}
 if(remote){try{const r=await loadRemote();if(r)db={...db,...r};console.log(r?'[startup] database loaded from Supabase':'[startup] Supabase database is empty: starting from local data')}catch(e){console.error('[startup] cannot read from Supabase:',e.message);process.exit(1)}}
-// One-time cleanup for the development chat fixture. The old fixture was
-// synchronized into production storage, so removing its source files alone
-// could not remove it from existing deployments.
-const DEMO_USER_IDS=new Set(['u1','u2','u3','u4','u5','u6']);
-const syncList=k=>{try{return JSON.parse(db.sync[k]||'[]')}catch{return[]}};
-function removeDemoChatData(){
- const users=syncList('rblink_users');
- if(!users.some(u=>DEMO_USER_IDS.has(u.id)))return false;
- const accountIds=new Set(db.users.map(u=>u.id));
- const members=users.filter(u=>!DEMO_USER_IDS.has(u.id)&&accountIds.has(u.id));
- const owner=db.users.find(u=>u.role==='owner')||db.users[0];
- if(!owner)return false;
- if(!members.some(u=>u.id===owner.id))members.push({id:owner.id,name:owner.name,email:owner.email||'',username:(owner.email||'member').split('@')[0],avatar:owner.avatar||'',role:owner.role||'owner',presence:'online',joinedAt:owner.createdAt||new Date().toISOString(),lastActive:new Date().toISOString()});
- let workspace={};try{workspace=JSON.parse(db.sync.rblink_workspace||'{}')}catch{}
- const now=new Date().toISOString();
- db.sync.rblink_users=JSON.stringify(members);
- db.sync.rblink_workspace=JSON.stringify({...workspace,id:workspace.id||'ws_rblink_main',name:workspace.name||'rblink.chat',ownerId:owner.id,pendingInvites:[]});
- db.sync.rblink_channels=JSON.stringify([{id:'c_general',name:'general',description:'Team-wide conversation.',topic:'',isPrivate:false,isArchived:false,category:'general',memberIds:members.map(u=>u.id),createdBy:owner.id,createdAt:now,isStarred:false}]);
- db.sync.rblink_dms='[]';db.sync.rblink_messages='{}';db.rev++;
- return true;
-}
-const demoChatDataRemoved=removeDemoChatData();
+if(db.sync&&purgeDemo(db.sync)){db.rev=(db.rev||0)+1;console.log('[startup] removed old sample users, groups and messages')}
 const SECRET=process.env.SESSION_SECRET||db.secret;
 let storage='ok',pushing=false,again=false;
 async function pushRemote(){if(pushing){again=true;return}pushing=true;try{await saveRemote(db);storage='ok'}catch(e){storage='error: '+e.message;console.error('[db] Supabase save failed:',e.message)}pushing=false;if(again){again=false;pushRemote()}}
@@ -39,7 +18,6 @@ const flush=()=>{const data=JSON.stringify(db),tmp=DBF+'.tmp';
  if(remote)pushRemote()};
 const drain=async()=>{for(let i=0;i<60&&(pushing||again);i++)await new Promise(r=>setTimeout(r,100))};
 let st;const save=()=>{clearTimeout(st);st=setTimeout(flush,200)};flush();
-if(demoChatDataRemoved)console.log('[startup] removed development chat users and sample conversations');
 console.log(remote?`[startup] saving to Supabase (plus a local copy in ${DATA})`:storage==='ok'?`[startup] data folder is writable: ${DATA}`:`[startup] PROBLEM: cannot write to ${DATA} (${storage}). Check the folder permissions.`);
 for(const ev of['uncaughtException','unhandledRejection'])process.on(ev,e=>console.error('[error]',e&&e.stack||e));
 for(const sg of['SIGTERM','SIGINT'])process.on(sg,async()=>{flush();await drain();process.exit(0)});
@@ -84,10 +62,7 @@ const R={
   if(!u){u=mk(g.name||g.email,g.email,'',{avatar:g.picture||''});if(invite&&ctx.useInvite)ctx.useInvite(invite,u)}u.googleId=g.sub;flush();session(q,s,u)},
  'POST /api/auth/logout':(q,s)=>send(s,200,{ok:true},{'Set-Cookie':'rblink_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'}),
  'GET /api/auth/me':(q,s,u)=>send(s,200,{user:pub(u)}),
- 'GET /api/sync':(q,s)=>send(s,200,{rev:db.rev,data:db.sync}),
  'GET /api/sync/rev':(q,s)=>send(s,200,{rev:db.rev}),
- 'PUT /api/sync':async(q,s)=>{const b=await json(q);if(b.baseRev!==db.rev)return send(s,409,{rev:db.rev,data:db.sync});
-  for(const k of KEYS)if(typeof b.data?.[k]==='string')db.sync[k]=b.data[k];db.rev++;save();bcast({type:'sync',payload:{rev:db.rev}});send(s,200,{rev:db.rev})},
  'POST /api/upload':async(q,s)=>{const m=/boundary=(?:"([^"]+)"|([^;]+))/.exec(q.headers['content-type']||'');if(!m)return send(s,400,{error:'Expected multipart upload'});
   const buf=await body(q,MAXB),b=Buffer.from('--'+(m[1]||m[2])),files=[];let i=buf.indexOf(b);
   while(i>=0){const j=buf.indexOf(b,i+b.length);if(j<0)break;const part=buf.subarray(i+b.length+2,j-2),h=part.indexOf('\r\n\r\n'),head=part.subarray(0,h).toString(),fn=/filename="([^"]*)"/.exec(head);
@@ -112,6 +87,7 @@ const route=key=>{if(R[key])return{fn:R[key],P:{}};const i=key.indexOf(' '),m=ke
 const server=http.createServer(async(q,s)=>{
  try{const url=new URL(q.url,'http://x'),key=q.method+' '+url.pathname,rt=route(key);
   if(url.pathname.startsWith('/api/')&&apiLimited(ipOf(q)))return send(s,429,{error:'Too many requests. Please slow down.'});
+  if(prod&&q.method!=='GET'&&q.method!=='HEAD'&&q.headers.origin){let ok=false;try{ok=new URL(q.headers.origin).host===q.headers.host}catch{}if(!ok)return send(s,403,{error:'Cross-site request blocked'})}
   if(rt){const{fn,P}=rt;if(key.includes('/auth/')&&key!=='GET /api/auth/me'&&limited(ipOf(q)))return send(s,429,{error:'Too many attempts, wait a minute'});
    const u=authOf(q,url);if(!(open.has(key)||fn.open)&&!u)return send(s,401,{error:'Please log in'});return await fn(q,s,u,P,url)}
   if(url.pathname.startsWith('/api/'))return send(s,404,{error:'Not found'});
@@ -137,11 +113,12 @@ server.on('upgrade',(q,sock)=>{const url=new URL(q.url,'http://x'),u=url.pathnam
  sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+crypto.createHash('sha1').update(q.headers['sec-websocket-key']+GUID).digest('base64')+'\r\n\r\n');
  const c={sock,u,state:{}};clients.add(c);let buf=Buffer.alloc(0);
  sock.on('data',d=>{buf=Buffer.concat([buf,d]);let f;while((f=frame(buf))){buf=buf.subarray(f.n);if(f.op===8){sock.end();return}if(f.op===9)sock.write(enc(f.data,10));
-  if(f.op===1)try{const m=JSON.parse(f.data.toString());if(String(m.type).startsWith('rtc:')){rooms.onMessage(c,m);continue}const g=ALLOW[m.type];if(g&&m.payload&&g(m.payload)===u.id)bcast(m,c)}catch{}}});
+  if(f.op===1)try{const m=JSON.parse(f.data.toString());if(String(m.type).startsWith('rtc:')){rooms.onMessage(c,m);continue}const g=ALLOW[m.type];if(g&&m.payload&&g(m.payload)===u.id)relay(m,c)}catch{}}});
  const gone=()=>{clients.delete(c);rooms.onClose(c)};sock.on('close',gone);sock.on('error',gone)});
+const relay=(m,c)=>{const r=ctx.chatRecipients?ctx.chatRecipients(m):null;if(!r)return bcast(m,c);const d=enc(JSON.stringify(m));for(const x of clients)if(x!==c&&r.has(x.u.id)&&!x.sock.destroyed)x.sock.write(d)};
 const wsSend=(c,m)=>{if(!c.sock.destroyed)c.sock.write(enc(JSON.stringify(m)))};
 const ctx={db,flush,save,send,json,body,bcast,wsSend,clients,pub,mk,session,hash,check,sign,authOf,sendMail,sendSms,MAXB};
-for(const m of[authMod,socialMod,workMod,aiMod])m(R,ctx);
+for(const m of[authMod,notifyMod,socialMod,workMod,aiMod,chatMod])m(R,ctx);
 const rooms=roomsMod(R,ctx);
 for(const key of Object.keys(R)){if(!key.includes(':'))continue;const sp=key.indexOf(' ');pats.push({m:key.slice(0,sp),key,re:new RegExp('^'+key.slice(sp+1).replace(/:(\w+)/g,'([^/]+)')+'$'),names:[...key.matchAll(/:(\w+)/g)].map(x=>x[1])})}
 server.listen(process.env.PORT||3001,()=>console.log(`[rblink.chat] listening on http://localhost:${server.address().port}`));

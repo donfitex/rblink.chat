@@ -76,9 +76,9 @@ export const TopNavbar: React.FC = () => {
         </button>
       </div>
 
-      {/* Right: Account menu, notifications and help */}
+      {/* Right: Quick Switch User + Notifications + Help */}
       <div className="flex items-center gap-1.5">
-        {/* Signed-in account menu */}
+        {/* Switch Active User Dropdown (Pair testing simulation) */}
         <div className="relative">
           <button
             onClick={() => setShowUserMenu(!showUserMenu)}

@@ -25,9 +25,9 @@ export default function(R,c){
  R['POST /api/users/:id/whatsapp-request']=(q,s,u,P)=>{const t=user(P.id);if(!t||t.id===u.id)return send(s,400,{error:'Invalid request'});
   if(!t.socials?.whatsapp)return send(s,400,{error:'This user has not added WhatsApp'});
   let r=db.waReq.find(x=>x.from===u.id&&x.to===t.id);if(r&&r.status!=='denied')return send(s,200,{status:r.status});
-  if(r)r.status='pending';else db.waReq.push(r={id:id('wa'),from:u.id,to:t.id,status:'pending',at:Date.now()});flush();send(s,200,{status:'pending'})};
+  if(r)r.status='pending';else db.waReq.push(r={id:id('wa'),from:u.id,to:t.id,status:'pending',at:Date.now()});if(c.notify)c.notify({to:t.id,type:'whatsapp_request',actor:au(u.id),text:'wants to see your WhatsApp number',link:'settings',key:'wa:'+u.id});flush();send(s,200,{status:'pending'})};
  R['GET /api/whatsapp-requests']=(q,s,u)=>send(s,200,db.waReq.filter(x=>x.to===u.id&&x.status==='pending').map(x=>({id:x.id,from:au(x.from),at:x.at})));
- R['POST /api/whatsapp-requests/:id']=async(q,s,u,P)=>{const r=db.waReq.find(x=>x.id===P.id&&x.to===u.id);if(!r)return send(s,404,{error:'Not found'});r.status=(await json(q)).approve?'approved':'denied';flush();send(s,200,{status:r.status})};
+ R['POST /api/whatsapp-requests/:id']=async(q,s,u,P)=>{const r=db.waReq.find(x=>x.id===P.id&&x.to===u.id);if(!r)return send(s,404,{error:'Not found'});r.status=(await json(q)).approve?'approved':'denied';if(c.notify)c.notify({to:r.from,type:'whatsapp_'+r.status,actor:au(u.id),text:r.status==='approved'?'approved your WhatsApp request':'declined your WhatsApp request',link:'profile/'+u.id});flush();send(s,200,{status:r.status})};
  // ----- posts
  const hp=(p,u,deep=true)=>({id:p.id,authorId:p.authorId,author:au(p.authorId),text:p.text,category:p.category,media:p.media,reshareOf:p.reshareOf,original:deep&&p.reshareOf?(db.posts.find(x=>x.id===p.reshareOf)?hp(db.posts.find(x=>x.id===p.reshareOf),u,false):{deleted:true}):null,
   createdAt:p.createdAt,shares:p.shares||0,reactionCounts:Object.fromEntries(Object.entries(p.reactions).map(([e,a])=>[e,a.length])),myReaction:u&&Object.entries(p.reactions).find(([,a])=>a.includes(u.id))?.[0]||null,
@@ -42,12 +42,12 @@ export default function(R,c){
  R['POST /api/posts']=async(q,s,u)=>{const b=await json(q),text=str(b.text,5000),m=media(b.media),cat=CATEGORIES.includes(b.category)?b.category:'other';let rs=null;
   if(b.reshareOf){const o=db.posts.find(x=>x.id===b.reshareOf);if(!o)return send(s,404,{error:'Post not found'});rs=o.reshareOf||o.id}
   if(!text&&!m.length&&!rs)return send(s,400,{error:'Write something or add a photo or video'});
-  const p={id:id('p'),authorId:u.id,text,category:rs?db.posts.find(x=>x.id===rs).category:cat,media:m,reshareOf:rs,reactions:{},saves:[],shares:0,createdAt:new Date().toISOString()};db.posts.push(p);save();send(s,200,hp(p,u))};
+  const p={id:id('p'),authorId:u.id,text,category:rs?db.posts.find(x=>x.id===rs).category:cat,media:m,reshareOf:rs,reactions:{},saves:[],shares:0,createdAt:new Date().toISOString()};db.posts.push(p);if(rs&&c.notify){const o=db.posts.find(x=>x.id===rs);if(o)c.notify({to:o.authorId,type:'reshare',actor:au(u.id),text:'reshared your post',link:'post/'+p.id})}save();send(s,200,hp(p,u))};
  R['DELETE /api/posts/:id']=(q,s,u,P)=>{const p=db.posts.find(x=>x.id===P.id);if(!p)return send(s,404,{error:'Not found'});if(p.authorId!==u.id&&!isAdmin(u))return send(s,403,{error:'Not allowed'});
   db.posts=db.posts.filter(x=>x!==p&&x.reshareOf!==p.id);db.comments=db.comments.filter(x=>x.postId!==p.id);save();send(s,200,{ok:true})};
  const toggle=(o,u,e)=>{const had=o.reactions[e]?.includes(u.id);for(const k of Object.keys(o.reactions)){o.reactions[k]=o.reactions[k].filter(x=>x!==u.id);if(!o.reactions[k].length)delete o.reactions[k]}if(!had)(o.reactions[e]??=[]).push(u.id)};
  const EMO=new Set(['👍','❤️','😂','😮','😢','🙏','🔥','🎉']);
- R['POST /api/posts/:id/react']=async(q,s,u,P)=>{const p=db.posts.find(x=>x.id===P.id),{emoji}=await json(q);if(!p||!EMO.has(emoji))return send(s,400,{error:'Invalid'});toggle(p,u,emoji);save();send(s,200,hp(p,u))};
+ R['POST /api/posts/:id/react']=async(q,s,u,P)=>{const p=db.posts.find(x=>x.id===P.id),{emoji}=await json(q);if(!p||!EMO.has(emoji))return send(s,400,{error:'Invalid'});const had=(p.reactions[emoji]||[]).includes(u.id);toggle(p,u,emoji);if(!had&&c.notify)c.notify({to:p.authorId,type:'reaction_post',actor:au(u.id),text:'reacted '+emoji+' to your post',link:'post/'+p.id,key:'rp:'+p.id+':'+u.id});save();send(s,200,hp(p,u))};
  R['POST /api/posts/:id/save']=(q,s,u,P)=>{const p=db.posts.find(x=>x.id===P.id);if(!p)return send(s,404,{error:'Not found'});const i=p.saves.indexOf(u.id);i<0?p.saves.push(u.id):p.saves.splice(i,1);save();send(s,200,hp(p,u))};
  open('POST /api/posts/:id/shared',(q,s,u,P)=>{const p=db.posts.find(x=>x.id===P.id);if(p){p.shares=(p.shares||0)+1;save()}send(s,200,{ok:true})});
  // ----- comments (text, voice, replies, reactions)
@@ -56,8 +56,12 @@ export default function(R,c){
  R['POST /api/posts/:id/comments']=async(q,s,u,P)=>{const b=await json(q),text=str(b.text,2000),audio=/^\/uploads\/[\w.-]+$/.test(b.audio||'')?b.audio:null;
   if(!db.posts.some(x=>x.id===P.id))return send(s,404,{error:'Post not found'});if(!text&&!audio)return send(s,400,{error:'Write a comment or record a voice note'});
   if(b.parentId&&!db.comments.some(x=>x.id===b.parentId&&x.postId===P.id))return send(s,400,{error:'Reply target not found'});
-  const x={id:id('c'),postId:P.id,parentId:b.parentId||null,authorId:u.id,text,audio,reactions:{},createdAt:new Date().toISOString()};db.comments.push(x);save();send(s,200,hc(x,u))};
- R['POST /api/comments/:id/react']=async(q,s,u,P)=>{const x=db.comments.find(y=>y.id===P.id),{emoji}=await json(q);if(!x||!EMO.has(emoji))return send(s,400,{error:'Invalid'});toggle(x,u,emoji);save();send(s,200,hc(x,u))};
+  const x={id:id('c'),postId:P.id,parentId:b.parentId||null,authorId:u.id,text,audio,reactions:{},createdAt:new Date().toISOString()};db.comments.push(x);
+  const post=db.posts.find(y=>y.id===P.id),par=x.parentId&&db.comments.find(y=>y.id===x.parentId),snip=text?text.slice(0,80):'sent a voice note';
+  if(c.notify){if(par)c.notify({to:par.authorId,type:'reply',actor:au(u.id),text:'replied to your comment: '+snip,link:'post/'+P.id});
+   if(post&&(!par||post.authorId!==par.authorId))c.notify({to:post.authorId,type:'comment',actor:au(u.id),text:'commented on your post: '+snip,link:'post/'+P.id})}
+  save();send(s,200,hc(x,u))};
+ R['POST /api/comments/:id/react']=async(q,s,u,P)=>{const x=db.comments.find(y=>y.id===P.id),{emoji}=await json(q);if(!x||!EMO.has(emoji))return send(s,400,{error:'Invalid'});const had=(x.reactions[emoji]||[]).includes(u.id);toggle(x,u,emoji);if(!had&&c.notify)c.notify({to:x.authorId,type:'reaction_comment',actor:au(u.id),text:'reacted '+emoji+' to your comment',link:'post/'+x.postId,key:'rc:'+x.id+':'+u.id});save();send(s,200,hc(x,u))};
  R['DELETE /api/comments/:id']=(q,s,u,P)=>{const x=db.comments.find(y=>y.id===P.id);if(!x)return send(s,404,{error:'Not found'});if(x.authorId!==u.id&&!isAdmin(u))return send(s,403,{error:'Not allowed'});
   const gone=new Set([x.id]);let n;do{n=gone.size;db.comments.filter(y=>gone.has(y.parentId)).forEach(y=>gone.add(y.id))}while(gone.size>n);db.comments=db.comments.filter(y=>!gone.has(y.id));save();send(s,200,{ok:true})};
  // ----- reports + public group list

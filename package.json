@@ -10,7 +10,7 @@
     "server": "node --env-file-if-exists=.env server/index.js",
     "build": "vite build",
     "start": "npm run build && npm run serve",
-    "test": "node tests/test-runner.js && node --test tests/merge.test.js tests/server.test.js tests/platform.test.js tests/resilience.test.js tests/storage.test.js",
+    "test": "node tests/test-runner.js && node --test tests/merge.test.js tests/server.test.js tests/platform.test.js tests/resilience.test.js tests/storage.test.js tests/privacy.test.js",
     "serve": "node --env-file-if-exists=.env server/index.js",
     "backup": "node --env-file-if-exists=.env scripts/backup.js",
     "migrate:uploads": "node --env-file-if-exists=.env scripts/migrate-uploads.js"

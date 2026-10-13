@@ -61,13 +61,13 @@ export default function(R,c){
    if(f.req&&!v)miss.push(LABEL[k]);ans[k]=v}
   const cu={};for(const x of j.form.custom){const v=str((b.custom||{})[x.id],1000);if(x.req&&!v)miss.push(x.label);cu[x.label]=v}
   if(miss.length)return send(s,400,{error:'Please complete: '+miss.join(', ')});
-  const app={id:id('a'),jobId:j.id,userId:u.id,status:'new',answers:ans,custom:cu,createdAt:new Date().toISOString()};db.apps.push(app);flush();
+  const app={id:id('a'),jobId:j.id,userId:u.id,status:'new',answers:ans,custom:cu,createdAt:new Date().toISOString()};db.apps.push(app);flush();c.notify&&c.notify({to:j.posterId,type:'application',actor:{id:u.id,name:u.name,avatar:u.avatar||''},text:'applied for '+j.title,link:'jobs/'+j.id});
   const origin=`${q.headers['x-forwarded-proto']||'http'}://${q.headers.host}`,cvl=ans.cv?(ans.cv.startsWith('/')?origin+ans.cv:ans.cv):'';
   const lines=[...Object.entries(ans).filter(([k,v])=>v&&k!=='cv').map(([k,v])=>`${LABEL[k]}: ${v}`),...Object.entries(cu).map(([k,v])=>`${k}: ${v}`),cvl&&`CV: ${cvl}`].filter(Boolean);
   if(j.applyEmail)sendMail({to:j.applyEmail,subject:`New application: ${j.title} - ${ans.fullName}`,text:`New application for "${j.title}" at ${j.company}\n\n${lines.join('\n')}`});
   send(s,200,{ok:true})};
  R['GET /api/jobs/:id/applications']=(q,s,u,P)=>{const j=db.jobs.find(x=>x.id===P.id);if(!j)return send(s,404,{error:'Not found'});if(j.posterId!==u.id&&!isAdmin(u))return send(s,403,{error:'Not allowed'});send(s,200,db.apps.filter(a=>a.jobId===j.id).map(a=>({...a,applicant:au(a.userId)})))};
  R['PATCH /api/jobs/:id/applications/:aid']=async(q,s,u,P)=>{const j=db.jobs.find(x=>x.id===P.id);if(!j)return send(s,404,{error:'Not found'});if(j.posterId!==u.id&&!isAdmin(u))return send(s,403,{error:'Not allowed'});
-  const a=db.apps.find(x=>x.id===P.aid&&x.jobId===j.id);if(!a)return send(s,404,{error:'Application not found'});const st=(await json(q)).status;if(!['new','shortlisted','rejected'].includes(st))return send(s,400,{error:'Invalid status'});a.status=st;flush();send(s,200,{status:st})};
+  const a=db.apps.find(x=>x.id===P.aid&&x.jobId===j.id);if(!a)return send(s,404,{error:'Application not found'});const st=(await json(q)).status;if(!['new','shortlisted','rejected'].includes(st))return send(s,400,{error:'Invalid status'});a.status=st;flush();c.notify&&c.notify({to:a.userId,type:'application_status',actor:{id:u.id,name:u.name,avatar:u.avatar||''},text:'updated your application for '+j.title+': '+st,link:'jobs/applied'});send(s,200,{status:st})};
  R['GET /api/me/applications']=(q,s,u)=>send(s,200,db.apps.filter(a=>a.userId===u.id).map(a=>{const j=db.jobs.find(x=>x.id===a.jobId);return{id:a.id,status:a.status||'new',createdAt:a.createdAt,job:j?{id:j.id,title:j.title,company:j.company}:null}}).reverse());
 }
