@@ -27,6 +27,8 @@ const verify=t=>{try{const[p,s]=String(t).split('.'),e=crypto.createHmac('sha256
 const authOf=(q,url)=>verify((/(?:^|;\s*)rblink_token=([^;]+)/.exec(q.headers.cookie||'')||[])[1]||url.searchParams.get('token'));
 const hash=pw=>{const s=crypto.randomBytes(16).toString('hex');return s+':'+crypto.scryptSync(pw,s,64).toString('hex')};
 const check=(pw,h)=>{const[s,k]=String(h).split(':');return !!k&&crypto.timingSafeEqual(crypto.scryptSync(pw,s,64),Buffer.from(k,'hex'))};
+const signFile=(uid,name,ttlMs=30*60*1000)=>{const p=Buffer.from(JSON.stringify({uid,fileName:name,exp:Date.now()+ttlMs})).toString('base64url');return p+'.'+crypto.createHmac('sha256',SECRET).update(p).digest('base64url')};
+const verifyFileToken=(t)=>{try{const[p,s]=String(t||'').split('.');if(!p||!s)return;const e=crypto.createHmac('sha256',SECRET).update(p).digest('base64url');if(s.length!==e.length||!crypto.timingSafeEqual(Buffer.from(s),Buffer.from(e)))return;const d=JSON.parse(Buffer.from(p,'base64url'));if(!d||!d.uid||!d.fileName||d.exp<Date.now())return;const u=db.users.find(x=>x.id===d.uid);if(!u)return;return d}catch{}};
 const pub=u=>({id:u.id,name:u.name,email:u.email||'',phone:u.phone||'',avatar:u.avatar||'',role:u.role,recruiter:!!u.recruiter,headline:u.headline||''});
 const mk=(name,email,pw,extra={})=>{const u={id:'u_'+crypto.randomBytes(6).toString('hex'),name:name.slice(0,60),email:email.toLowerCase(),pw:pw?hash(pw):'',role:db.users.length?'member':'owner',avatar:'',privacy:{searchVisibility:'everyone',messageVisibility:'everyone',allowDirectMessages:true,allowMentions:true,showPresence:true,showEmail:false},blockedUserIds:[],mutedUserIds:[],sessions:[],createdAt:new Date().toISOString(),...extra};db.users.push(u);flush();return u};
 const prod=process.env.NODE_ENV==='production',TRUST=process.env.TRUST_PROXY==='1'||(process.env.TRUST_PROXY!=='0'&&prod);
@@ -45,6 +47,14 @@ const send=(s,c,o,h={})=>{s.writeHead(c,{'Content-Type':'application/json',...SE
 const session=(q,s,u,meta={})=>{const sid=meta.id||`sess_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;u.sessions??=[];const rec=(u.sessions.find(x=>x.id===sid)||{id:sid});rec.id=sid;rec.userAgent=String(meta.userAgent||q.headers['user-agent']||'Unknown device');rec.ip=meta.ip||ipOf(q);rec.lastSeen=new Date().toISOString();rec.createdAt=rec.createdAt||new Date().toISOString();rec.revoked=false;u.sessions=u.sessions.filter(x=>x.id!==sid);u.sessions.push(rec);flush();const token=sign(u.id,sid);return send(s,200,{user:pub(u),token,sessionId:sid,session:rec},{'Set-Cookie':`rblink_token=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${q.headers['x-forwarded-proto']==='https'?'; Secure':''}`});};
 // ---- routes
 const open=new Set(['GET /api/health','GET /api/config','POST /api/auth/signup','POST /api/auth/login','POST /api/auth/google','POST /api/auth/logout']);
+const parseSyncMessages=()=>{try{return JSON.parse(db.sync?.rblink_messages||'{}')}catch{return {}}};
+const scanMessages=()=>{const out={};const add=(v)=>{if(!v||typeof v!=='object')return;for(const [k,list] of Object.entries(v)){if(!list||typeof list!=='object')continue;if(Array.isArray(list)){out[k]=list}else if(typeof list==='object'){out[k]=list}}};add(parseSyncMessages());try{const sync=db.sync||{};for(const k of Object.keys(sync)){const raw=sync[k];if(typeof raw==='string'){try{const j=JSON.parse(raw);if(j&&typeof j==='object')add(j)}catch{}}else if(raw&&typeof raw==='object')add(raw)}}catch{};return out};
+const findMessage=(id)=>{const map=scanMessages();for(const [key,list] of Object.entries(map)){const arr=Array.isArray(list)?list:Object.values(list||{});const msg=arr.find(x=>x&&x.id===id);if(msg)return{key,message:msg}};return null};
+const convMembers=(key)=>{const st=db.sync||{};const dms=JSON.parse(st.rblink_dms||'[]');const channels=JSON.parse(st.rblink_channels||'[]');const dm=dms.find(x=>x&&x.id===key);if(dm&&Array.isArray(dm.participantIds))return new Set(dm.participantIds);const ch=channels.find(x=>x&&x.id===key);if(ch&&Array.isArray(ch.memberIds))return new Set(ch.memberIds);return new Set();};
+const canAccessMessage=(u,msg,key)=>{if(!u||!msg)return false;if(msg.senderId===u.id)return true;return convMembers(key).has(u.id)};
+const canEditMessage=(u,msg,key)=>{if(!u||!msg)return false;if(u.role==='owner'||u.role==='admin'||msg.senderId===u.id)return true;return false;};
+const updateMessage=(key,id,next)=>{const map=scanMessages();const list=Array.isArray(map[key])?map[key]:[];map[key]=list.map(x=>x&&x.id===id?{...x,...next,id:x.id}:x);db.sync ??= {};db.sync.rblink_messages=JSON.stringify(map);};
+const isPrivateFileName=(name='')=>/private(?:[._-]|$)/i.test(String(name).trim());
 const R={
  'GET /api/health':async(q,s,u,P,x)=>{if(remote&&x.searchParams.get('deep')){try{await pingRemote()}catch(e){return send(s,503,{status:'degraded',error:e.message})}}send(s,200,{status:'ok',mode:remote?'supabase':'local',storage,service:'rblink.chat server',version:'4.0.0',timestamp:new Date().toISOString()})},
  'GET /api/config':(q,s)=>send(s,200,{googleClientId:GOOGLE}),
@@ -63,18 +73,22 @@ const R={
  'POST /api/auth/logout':(q,s)=>send(s,200,{ok:true},{'Set-Cookie':'rblink_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'}),
  'GET /api/auth/me':(q,s,u)=>send(s,200,{user:pub(u)}),
  'GET /api/sync/rev':(q,s)=>send(s,200,{rev:db.rev}),
- 'POST /api/upload':async(q,s)=>{const m=/boundary=(?:"([^"]+)"|([^;]+))/.exec(q.headers['content-type']||'');if(!m)return send(s,400,{error:'Expected multipart upload'});
-  const buf=await body(q,MAXB),b=Buffer.from('--'+(m[1]||m[2])),files=[];let i=buf.indexOf(b);
+ 'POST /api/upload':async(q,s,u)=>{if(!u)return send(s,401,{error:'Please log in'});const m=/boundary=(?:"([^"]+)"|([^;]+))/.exec(q.headers['content-type']||'');if(!m)return send(s,400,{error:'Expected multipart upload'});
+  const buf=await body(q,MAXB),b=Buffer.from('--'+(m[1]||m[2])),files=[];let i=buf.indexOf(b);db.files??={};
   while(i>=0){const j=buf.indexOf(b,i+b.length);if(j<0)break;const part=buf.subarray(i+b.length+2,j-2),h=part.indexOf('\r\n\r\n'),head=part.subarray(0,h).toString(),fn=/filename="([^"]*)"/.exec(head);
    if(fn&&files.length<10){const data=part.subarray(h+4),name=path.basename(fn[1])||'file',ct=((/Content-Type:\s*([^\r\n]+)/i.exec(head)||[])[1]||'application/octet-stream').split(';')[0].trim().toLowerCase();
     let ext=path.extname(name).toLowerCase().replace(/[^.\w]/g,'').slice(0,10);
     if(!OKEXT.has(ext))ext=EXTBY[ct]||ext;
     if(!OKEXT.has(ext))return send(s,415,{error:'This file type is not allowed'});
     const fname=`file-${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`;
-    try{if(remote)await putFile(fname,data,ct);else fs.writeFileSync(path.join(UP,fname),data)}catch(e){console.error('[upload]',e.message);return send(s,500,{error:'The server could not save the file ('+(e.code||e.message)+'). Check the data folder.'})}
-    files.push({id:'att_'+crypto.randomBytes(5).toString('hex'),name,size:data.length,type:ct,url:'/uploads/'+fname,uploadedAt:new Date().toISOString()})}
+    const privateFile=isPrivateFileName(name);
+    try{if(remote)await putFile(fname,data,ct);else fs.writeFileSync(path.join(UP,fname),data);db.files[fname]={ownerId:u.id,uploadedAt:new Date().toISOString(),name,private:privateFile}}catch(e){console.error('[upload]',e.message);return send(s,500,{error:'The server could not save the file ('+(e.code||e.message)+'). Check the data folder.'})}
+    const accessUrl='/uploads/'+fname,token=signFile(u.id,fname);files.push({id:'att_'+crypto.randomBytes(5).toString('hex'),name,size:data.length,type:ct,url:accessUrl,signedUrl:accessUrl+'?token='+token,uploadedAt:new Date().toISOString()})}
    i=j}
-  files.length?send(s,200,{success:true,files}):send(s,400,{error:'No files uploaded'})}
+  files.length?send(s,200,{success:true,files}):send(s,400,{error:'No files uploaded'})},
+ 'GET /api/messages/:id':(q,s,u,P)=>{const msg=findMessage(P.id);if(!msg)return send(s,404,{error:'Message not found'});if(!canAccessMessage(u,msg.message,msg.key))return send(s,403,{error:'Not allowed'});send(s,200,msg.message)},
+ 'PATCH /api/messages/:id':async(q,s,u,P)=>{const msg=findMessage(P.id);if(!msg)return send(s,404,{error:'Message not found'});if(!canEditMessage(u,msg.message,msg.key))return send(s,403,{error:'Not allowed'});const b=await json(q);const next={...msg.message};if(b.content!==undefined)next.content=String(b.content).slice(0,5000);if(b.attachments!==undefined)next.attachments=Array.isArray(b.attachments)?b.attachments.slice(0,20):[];updateMessage(msg.key,msg.message.id,next);db.rev++;flush();bcast({type:'sync',payload:{rev:db.rev}});send(s,200,next)},
+ 'DELETE /api/messages/:id':(q,s,u,P)=>{const msg=findMessage(P.id);if(!msg)return send(s,404,{error:'Message not found'});if(!canEditMessage(u,msg.message,msg.key))return send(s,403,{error:'Not allowed'});const list=parseSyncMessages();list[msg.key]=((list[msg.key]||[])||[]).filter(x=>x.id!==msg.message.id);if(!list[msg.key].length)delete list[msg.key];db.sync ??= {};db.sync.rblink_messages=JSON.stringify(list);db.rev++;flush();bcast({type:'sync',payload:{rev:db.rev}});send(s,200,{ok:true})}
 };
 const EXTBY={'image/jpeg':'.jpg','image/png':'.png','image/gif':'.gif','image/webp':'.webp','image/avif':'.avif','image/heic':'.heic','image/heif':'.heif','video/mp4':'.mp4','video/webm':'.webm','video/quicktime':'.mov','audio/webm':'.webm','audio/mpeg':'.mp3','audio/mp4':'.m4a','audio/ogg':'.ogg','audio/wav':'.wav','audio/aac':'.aac','application/pdf':'.pdf'};
 const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.jfif':'image/jpeg','.jpe':'image/jpeg','.bmp':'image/bmp','.heic':'image/heic','.heif':'image/heif','.gif':'image/gif','.webp':'image/webp','.svg':'image/svg+xml','.pdf':'application/pdf','.mp4':'video/mp4','.webm':'video/webm','.mov':'video/quicktime','.m4v':'video/mp4','.mp3':'audio/mpeg','.wav':'audio/wav','.ogg':'audio/ogg','.m4a':'audio/mp4','.aac':'audio/aac','.txt':'text/plain'};
@@ -92,7 +106,14 @@ const server=http.createServer(async(q,s)=>{
    const u=authOf(q,url);if(!(open.has(key)||fn.open)&&!u)return send(s,401,{error:'Please log in'});return await fn(q,s,u,P,url)}
   if(url.pathname.startsWith('/api/'))return send(s,404,{error:'Not found'});
   const p=decodeURIComponent(url.pathname);
-  if(p.startsWith('/uploads/')){const name=p.slice(9);if(serve(s,UP,name,true))return;
+  if(p.startsWith('/uploads/')){const name=p.slice(9).split('?')[0];const qtok=url.searchParams.get('token');const meta=db.files&&db.files[name];if(!meta){if(remote&&/^[\w.-]+$/.test(name)){s.writeHead(302,{Location:publicUrl(name),'Cache-Control':'public, max-age=86400',...SEC});return s.end()}return send(s,404,{error:'Not found'})}
+   const isPrivate=!!meta.private;
+   if(qtok){
+     const v=verifyFileToken(qtok);if(!v||v.uid!==meta.ownerId||v.fileName!==name)return send(s,401,{error:'Invalid file token'})
+   }else if(isPrivate){
+     const u=authOf(q,url);if(!u||u.id!==meta.ownerId)return send(s,401,{error:'Please log in'})
+   }
+   if(serve(s,UP,name,true))return;
    if(remote&&/^[\w.-]+$/.test(name)){s.writeHead(302,{Location:publicUrl(name),'Cache-Control':'public, max-age=86400',...SEC});return s.end()}
    return send(s,404,{error:'Not found'})}
   const dist=path.join(root,'dist');if(!fs.existsSync(dist)){s.writeHead(503);return s.end('Frontend not built. Run: npm run build')}

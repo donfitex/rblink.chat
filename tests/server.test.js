@@ -59,3 +59,19 @@ test('upload accepts a photo with no file extension (uses its type) and health r
  const f2=new FormData();f2.append('files',new Blob(['x'],{type:'image/heic'}),'IMG_1.HEIC');
  assert.equal((await fetch(B+'/api/upload',{method:'POST',body:f2,headers:{Cookie:'rblink_token='+A.token}})).status,200);
  assert.equal((await (await call('GET','/api/health')).json()).storage,'ok')});
+
+test('uploads require auth and message APIs are permission-checked',async()=>{
+ const C=await (await call('POST','/api/auth/signup',{name:'Cara',email:'cara@example.com',password:'password123',confirmPassword:'password123'})).json();
+ const f=new FormData();f.append('files',new Blob(['secret']),'private.txt');
+ const up=await (await fetch(B+'/api/upload',{method:'POST',body:f,headers:{Cookie:'rblink_token='+A.token}})).json();
+ assert.equal((await fetch(B+up.files[0].url)).status,401);
+ assert.equal((await fetch(B+up.files[0].url,{headers:{Cookie:'rblink_token='+A.token}})).status,200);
+
+ const dmId=(await (await call('POST','/api/dms',{userId:Bu.user.id},A.token)).json()).id;
+ await call('PUT','/api/sync',{baseRev:2,data:{rblink_messages:JSON.stringify({[dmId]:[{id:'secret_msg',senderId:A.user.id,content:'private note',timestamp:'2026-05-01T00:00:00Z'}]})}},A.token);
+ const ok=(await call('GET','/api/messages/secret_msg',null,Bu.token));assert.equal(ok.status,200);assert.equal((await ok.json()).content,'private note');
+ assert.equal((await call('GET','/api/messages/secret_msg',null,C.token)).status,404);
+ const edit=await call('PATCH','/api/messages/secret_msg',{content:'updated'},A.token);assert.equal(edit.status,200);assert.equal((await edit.json()).content,'updated');
+ const del=await call('DELETE','/api/messages/secret_msg',null,A.token);assert.equal(del.status,200);
+ assert.equal((await call('GET','/api/messages/secret_msg',null,Bu.token)).status,404);
+});
